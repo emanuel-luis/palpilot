@@ -47,6 +47,13 @@ resource "google_project_iam_member" "coordinator_compute" {
   member  = "serviceAccount:${google_service_account.coordinator.email}"
 }
 
+# Coordenador lê/grava users.json no bucket do painel
+resource "google_storage_bucket_iam_member" "coordinator_users" {
+  bucket = google_storage_bucket.palworld_panel.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.coordinator.email}"
+}
+
 # Quem roda o terraform precisa de actAs sobre o SA do coordenador para
 # deployar a função com esse SA.
 data "google_client_openid_userinfo" "me" {}
@@ -117,6 +124,7 @@ resource "google_cloudfunctions2_function" "coordinator" {
       VM_INSTANCE    = "palworld-tf-vm"
       VM_IP          = google_compute_address.palworld_ip.address
       VM_PORT        = tostring(var.panel_port)
+      PANEL_BUCKET   = google_storage_bucket.palworld_panel.name
       PANEL_USER     = var.panel_user
       PANEL_PASSWORD = var.panel_password
       INTERNAL_TOKEN = var.internal_token

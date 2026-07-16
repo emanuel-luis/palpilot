@@ -114,9 +114,10 @@
 </header>
 <div id="vmBanner" style="display:none"></div>
 <nav>
-  <button data-tab="status" class="active">Status</button>
-  <button data-tab="config">Configurações</button>
-  <button data-tab="commands">Comandos</button>
+  <button data-tab="status" data-perm="view" class="active">Status</button>
+  <button data-tab="config" data-perm="config">Configurações</button>
+  <button data-tab="commands" data-perm="commands">Comandos</button>
+  <button data-tab="users" data-perm="users">Usuários</button>
 </nav>
 
 <main>
@@ -195,6 +196,28 @@
       </div>
     </div>
   </section>
+
+  <!-- USERS -->
+  <section class="tab" id="tab-users">
+    <div class="card">
+      <h2 id="userFormTitle">Adicionar usuário</h2>
+      <div class="grid">
+        <div><label>Usuário</label><input id="uName" placeholder="nome de login"></div>
+        <div><label>Senha</label><input id="uPass" type="password" placeholder="(deixe vazio p/ manter ao editar)"></div>
+      </div>
+      <label style="margin-top:12px">Permissões</label>
+      <div class="row" id="uPerms" style="gap:16px"></div>
+      <div class="row end" style="margin-top:14px">
+        <button class="btn ghost" onclick="resetUserForm()">Limpar</button>
+        <button class="btn" onclick="saveUser()">Salvar usuário</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Usuários</h2>
+      <table><thead><tr><th>Usuário</th><th>Permissões</th><th></th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="3" class="muted">Carregando…</td></tr></tbody></table>
+    </div>
+  </section>
 </main>
 </div>
 
@@ -212,12 +235,27 @@ let AUTH=localStorage.getItem(AUTH_KEY)||'';
 function showLogin(){$('#login').style.display='flex';$('#app').style.display='none';}
 function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
 function logout(){AUTH='';localStorage.removeItem(AUTH_KEY);stopTimers();showLogin();}
+let ME={perms:[]}, HAS_POWER=false;
+const PERM_LABELS={view:'Ver status',power:'Ligar/Desligar',config:'Editar config',commands:'Comandos',users:'Gerenciar usuários'};
+function onLogin(d){ ME=d||{perms:[]}; applyPerms(); start(); }
+function applyPerms(){
+  const p=ME.perms||[];
+  document.querySelectorAll('nav button').forEach(b=>{
+    b.style.display=p.includes(b.dataset.perm)?'':'none';
+  });
+  HAS_POWER=p.includes('power');
+  const active=document.querySelector('nav button.active');
+  if(!active||active.style.display==='none'){
+    const first=[...document.querySelectorAll('nav button')].find(b=>b.style.display!=='none');
+    if(first)first.click();
+  }
+}
 async function doLogin(e){
   e.preventDefault();
   const u=val('loginUser'),p=$('#loginPass').value;
   const token=btoa(u+':'+p);
   const r=await fetch('/api/session',{headers:{Authorization:'Basic '+token}});
-  if(r.ok){AUTH=token;localStorage.setItem(AUTH_KEY,token);$('#loginErr').textContent='';start();}
+  if(r.ok){AUTH=token;localStorage.setItem(AUTH_KEY,token);$('#loginErr').textContent='';onLogin(await r.json());}
   else{$('#loginErr').textContent='Credenciais inválidas';}
 }
 
@@ -227,6 +265,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   b.classList.add('active');$('#tab-'+b.dataset.tab).classList.add('active');
   if(b.dataset.tab==='config'&&VM_STATE==='RUNNING')loadConfig();
+  if(b.dataset.tab==='users')loadUsers();
 });
 function curTab(){const b=document.querySelector('nav button.active');return b?b.dataset.tab:'status';}
 
@@ -250,8 +289,8 @@ async function pollVm(){
   const running=st==='RUNNING';
   const busy=/STOP|STAG|PROV|REPAIR|SUSPEND/.test(st);
   $('#statusDot').className='dot '+(running?'on':(busy?'busy':'off'));
-  $('#btnStart').style.display=running||busy?'none':'inline-block';
-  $('#btnStop').style.display=running?'inline-block':'none';
+  $('#btnStart').style.display=(HAS_POWER&&!running&&!busy)?'inline-block':'none';
+  $('#btnStop').style.display=(HAS_POWER&&running)?'inline-block':'none';
   const banner=$('#vmBanner');
   if(running){
     banner.style.display='none';
@@ -260,9 +299,10 @@ async function pollVm(){
   }else{
     stopStatusTimer();
     banner.style.display='flex';
+    const startBtn=HAS_POWER?`<button class="btn ok" onclick="startVm()">▶ Ligar servidor</button>`:'<span class="muted">(sem permissão para ligar)</span>';
     banner.innerHTML = busy
       ? `<span>Servidor em transição (${st})… aguarde.</span>`
-      : `<span>🔌 Servidor desligado (${st}).</span><button class="btn ok" onclick="startVm()">▶ Ligar servidor</button>`;
+      : `<span>🔌 Servidor desligado (${st}).</span>`+startBtn;
     $('#metrics').innerHTML='<span class="muted">servidor desligado</span>';
     $('#players').innerHTML='<tr><td colspan="4" class="muted">servidor desligado</td></tr>';
     $('#serverName').textContent='Palworld';$('#serverMeta').textContent='';
@@ -446,6 +486,57 @@ async function cmd(ep,body){
   if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(loadStatus,1200);
 }
 
+// ---- users ----
+let ALL_PERMS=['view','power','config','commands','users'];
+function renderPermChecks(sel){
+  $('#uPerms').innerHTML=ALL_PERMS.map(p=>
+    `<label class="row" style="gap:6px;margin:0"><input type="checkbox" value="${p}" style="width:auto"
+      ${sel&&sel.includes(p)?'checked':''}> ${PERM_LABELS[p]||p}</label>`).join('');
+}
+function resetUserForm(){
+  $('#userFormTitle').textContent='Adicionar usuário';
+  $('#uName').value='';$('#uName').readOnly=false;$('#uPass').value='';
+  renderPermChecks(['view']);
+}
+async function loadUsers(){
+  const r=await api('GET','/api/users');
+  if(!r.ok){$('#usersBody').innerHTML=`<tr><td colspan="3" class="muted">Sem permissão ou erro (${r.status})</td></tr>`;return;}
+  ALL_PERMS=r.data.all_perms||ALL_PERMS;
+  if(!$('#uPerms').children.length)renderPermChecks(['view']);
+  const list=r.data.users||[];
+  $('#usersBody').innerHTML=list.length?list.map(u=>{
+    const badges=(u.perms||[]).map(p=>`<span class="muted" style="font-size:11px;border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-right:4px">${PERM_LABELS[p]||p}</span>`).join('');
+    const self=u.username===ME.user;
+    return `<tr><td>${u.username}${self?' <span class="muted">(você)</span>':''}</td><td>${badges||'<span class="muted">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn ghost" onclick='editUser(${JSON.stringify(u).replace(/'/g,"&#39;")})'>Editar</button>
+        <button class="btn danger" onclick="delUser('${u.username}')" ${self?'disabled':''}>Excluir</button></td></tr>`;
+  }).join(''):'<tr><td colspan="3" class="muted">Nenhum usuário</td></tr>';
+}
+function editUser(u){
+  $('#userFormTitle').textContent='Editar usuário: '+u.username;
+  $('#uName').value=u.username;$('#uName').readOnly=true;$('#uPass').value='';
+  renderPermChecks(u.perms||[]);
+  document.querySelector('[data-tab="users"]').scrollIntoView({behavior:'smooth'});
+}
+async function saveUser(){
+  const username=val('uName');
+  if(!username){toast('Informe o usuário',false);return;}
+  const perms=[...document.querySelectorAll('#uPerms input:checked')].map(i=>i.value);
+  const body={username,perms};
+  const pass=$('#uPass').value;
+  if(pass)body.password=pass;
+  const r=await api('POST','/api/users',body);
+  if(r.ok){toast('Usuário salvo');resetUserForm();loadUsers();}
+  else toast('Falha: '+(r.data.error||r.status),false);
+}
+async function delUser(username){
+  if(!confirm('Excluir usuário '+username+'?'))return;
+  const r=await api('DELETE','/api/users/'+encodeURIComponent(username));
+  if(r.ok){toast('Excluído');loadUsers();}
+  else toast('Falha: '+(r.data.error||r.status),false);
+}
+
 // ---- timers / boot ----
 let vmTimer=null, statusTimer=null;
 function ensureStatusTimer(){ if(!statusTimer)statusTimer=setInterval(loadStatus,15000); }
@@ -459,7 +550,7 @@ function start(){
 (async()=>{
   if(AUTH){
     const r=await fetch('/api/session',{headers:{Authorization:'Basic '+AUTH}});
-    if(r.ok){start();return;}
+    if(r.ok){onLogin(await r.json());return;}
   }
   showLogin();
 })();
