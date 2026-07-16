@@ -51,6 +51,10 @@ DEFAULT_INI_PATH = os.environ.get(
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "palworld")
 STEAM_USER = os.environ.get("STEAM_USER", "steam")
 PANEL_PORT = int(os.environ.get("PANEL_PORT", "8080"))
+PANEL_BUCKET = os.environ.get("PANEL_BUCKET", "")
+PANEL_DIR = os.environ.get(
+    "PANEL_DIR", os.path.dirname(os.path.abspath(__file__))
+)
 INDEX_PATH = os.environ.get(
     "INDEX_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 )
@@ -298,9 +302,35 @@ def build_app():
         return cred.username
 
     @app.get("/", response_class=HTMLResponse)
-    def index(_: str = Depends(auth)):
+    def index():
+        # Public: the page renders a login form and authenticates the API calls.
         with open(INDEX_PATH, "r", encoding="utf-8") as f:
             return HTMLResponse(f.read())
+
+    @app.get("/api/session")
+    def session(user: str = Depends(auth)):
+        # Used by the login form to validate credentials.
+        return {"ok": True, "user": user}
+
+    @app.post("/api/self-update")
+    def self_update(_: str = Depends(auth)):
+        # Pull the latest panel code from GCS and restart this service.
+        if not PANEL_BUCKET:
+            raise HTTPException(400, "PANEL_BUCKET not configured")
+        try:
+            subprocess.run(
+                ["gsutil", "-m", "rsync", f"gs://{PANEL_BUCKET}", PANEL_DIR],
+                check=True,
+                capture_output=True,
+                timeout=120,
+            )
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(500, f"rsync failed: {(e.stderr or b'').decode()}")
+        # Restart after replying so the client gets a response first.
+        subprocess.Popen(
+            ["bash", "-c", f"sleep 1; systemctl restart {SERVICE_NAME}-panel"]
+        )
+        return {"updated": True, "restarting": True}
 
     # ---- config (.ini) ----
 

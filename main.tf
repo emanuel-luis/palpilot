@@ -6,6 +6,16 @@ provider "google" {
 
 
 #
+# IP externo estático (persiste entre recriações da VM)
+#
+resource "google_compute_address" "palworld_ip" {
+  name         = "palworld-ip"
+  region       = var.region
+  address_type = "EXTERNAL"
+}
+
+
+#
 # Firewall Palworld
 #
 resource "google_compute_firewall" "palworld_udp" {
@@ -70,6 +80,40 @@ resource "google_storage_bucket" "palworld_backup" {
 
 
 #
+# Bucket com o código do painel admin (desacoplado da VM: atualize com
+# gsutil + botão "Atualizar painel" sem precisar de terraform apply/recreate)
+#
+resource "google_storage_bucket" "palworld_panel" {
+  name          = "${var.project_id}-palworld-panel"
+  location      = "SOUTHAMERICA-EAST1"
+  storage_class = "STANDARD"
+
+  uniform_bucket_level_access = true
+}
+
+resource "google_storage_bucket_object" "panel_py" {
+  name   = "panel.py"
+  bucket = google_storage_bucket.palworld_panel.name
+  source = "${path.module}/panel/panel.py"
+
+  # Uploads iniciais só; atualizações posteriores via gsutil não são revertidas.
+  lifecycle {
+    ignore_changes = [source, detect_md5hash]
+  }
+}
+
+resource "google_storage_bucket_object" "panel_html" {
+  name   = "index.html"
+  bucket = google_storage_bucket.palworld_panel.name
+  source = "${path.module}/panel/index.html"
+
+  lifecycle {
+    ignore_changes = [source, detect_md5hash]
+  }
+}
+
+
+#
 # Disco persistente do Palworld
 #
 resource "google_compute_disk" "palworld_data" {
@@ -102,6 +146,12 @@ resource "google_compute_instance" "palworld" {
 
   tags = [
     "https-server"
+  ]
+
+  # Painel baixa o código do bucket no boot; garanta que os objetos existam.
+  depends_on = [
+    google_storage_bucket_object.panel_py,
+    google_storage_bucket_object.panel_html,
   ]
 
 
@@ -146,6 +196,7 @@ resource "google_compute_instance" "palworld" {
 
     access_config {
 
+      nat_ip       = google_compute_address.palworld_ip.address
       network_tier = "PREMIUM"
 
     }
@@ -157,9 +208,9 @@ resource "google_compute_instance" "palworld" {
 
     enable-osconfig = "TRUE"
 
-    # Admin panel: source files + config consumed by startup.sh
-    panel-py       = file("${path.module}/panel/panel.py")
-    panel-html     = file("${path.module}/panel/index.html")
+    # Admin panel config consumed by startup.sh. Code lives in GCS
+    # (panel-bucket), so panel changes never require a terraform apply.
+    panel-bucket   = google_storage_bucket.palworld_panel.name
     panel-port     = tostring(var.panel_port)
     panel-user     = var.panel_user
     panel-password = var.panel_password
@@ -225,6 +276,20 @@ resource "google_storage_bucket_iam_member" "palworld_backup_permission" {
 
   role = "roles/storage.objectAdmin"
 
+
+  member = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
+
+}
+
+
+#
+# Permitir VM ler (e o painel re-sincronizar) o código do painel
+#
+resource "google_storage_bucket_iam_member" "palworld_panel_read" {
+
+  bucket = google_storage_bucket.palworld_panel.name
+
+  role = "roles/storage.objectViewer"
 
   member = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
 
