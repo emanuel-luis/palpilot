@@ -125,8 +125,9 @@
   <!-- CONFIG -->
   <section class="tab" id="tab-config">
     <div class="card">
-      <h2>Configurações principais</h2>
-      <div class="grid" id="cfgForm"></div>
+      <h2>Configurações do servidor</h2>
+      <input id="cfgSearch" placeholder="Filtrar configurações…" oninput="renderCfg()" style="margin-bottom:12px">
+      <div class="grid" id="cfgForm"><span class="muted">Carregando…</span></div>
       <div class="row end" style="margin-top:14px">
         <label class="row" style="margin:0"><input type="checkbox" id="cfgRestart" style="width:auto"> reiniciar após salvar</label>
         <button class="btn ghost" onclick="loadConfig()">Recarregar</button>
@@ -258,47 +259,86 @@ function renderMetrics(d){
     ||'<span class="muted">sem métricas</span>';
 }
 
-// ---- config ----
-const FIELDS=[
-  ['ServerName','Nome do servidor','text'],
-  ['ServerDescription','Descrição','text'],
-  ['AdminPassword','Senha admin (REST/console)','text'],
-  ['ServerPassword','Senha de entrada','text'],
-  ['PublicPort','Porta pública','number'],
-  ['ServerPlayerMaxNum','Máx jogadores','number'],
-  ['Difficulty','Dificuldade','text'],
-  ['DeathPenalty','Penalidade de morte','text'],
-  ['DayTimeSpeedRate','Velocidade do dia','number'],
-  ['NightTimeSpeedRate','Velocidade da noite','number'],
-  ['ExpRate','Taxa de EXP','number'],
-  ['PalCaptureRate','Taxa de captura','number'],
-  ['PalSpawnNumRate','Taxa de spawn de Pals','number'],
-  ['PlayerDamageRateAttack','Dano do jogador','number'],
-  ['bEnablePlayerToPlayerDamage','PvP (True/False)','text'],
-  ['bIsPvP','PvP oficial (True/False)','text'],
-];
-let CFG_OPTIONS={};
+// ---- config (schema-driven, populated from live server defaults) ----
+const ENUMS={
+  Difficulty:['None','Casual','Normal','Hard'],
+  DeathPenalty:['None','Item','ItemAndEquipment','All'],
+  LogFormatType:['Text','Json'],
+};
+const SECRET_KEYS=['AdminPassword','ServerPassword'];
+let CFG_MODEL={};   // key -> {value, type}
+let CFG_ORIG={};    // original values, for change diff
+
 async function loadConfig(){
-  const r=await api('GET','/api/config');
-  if(!r.ok){toast('Falha ao ler config',false);return;}
-  CFG_OPTIONS=r.data.options||{};
-  $('#cfgRaw').value=r.data.raw||'';
-  $('#cfgPath').textContent=r.data.path||'';
-  $('#cfgForm').innerHTML=FIELDS.map(([k,label,type])=>{
-    const v=CFG_OPTIONS[k]??'';
-    return `<div><label>${label}<br><span class="muted" style="font-size:10px">${k}</span></label>
-      <input data-key="${k}" type="${type}" value="${String(v).replace(/"/g,'&quot;')}"></div>`;
-  }).join('');
+  const [set,cfg]=await Promise.all([
+    api('GET','/api/rest/settings'),
+    api('GET','/api/config'),
+  ]);
+  const eff=set.ok?set.data:{};
+  const iniOpts=cfg.ok?(cfg.data.options||{}):{};
+  $('#cfgRaw').value=cfg.ok?(cfg.data.raw||''):'';
+  $('#cfgPath').textContent=cfg.ok?(cfg.data.path||''):'';
+  if(!set.ok){
+    $('#cfgForm').innerHTML='<span class="muted">Servidor REST indisponível — use o editor bruto abaixo.</span>';
+    return;
+  }
+  const model={};
+  for(const [k,v] of Object.entries(eff)){
+    if(Array.isArray(v))continue;               // arrays: via editor bruto
+    model[k]={value:v,type:typeof v};
+  }
+  // segredos não vêm do /settings; puxa do .ini
+  SECRET_KEYS.forEach(k=>{ if(!(k in model))model[k]={value:iniOpts[k]??'',type:'string'}; });
+  CFG_MODEL=model;
+  CFG_ORIG=Object.fromEntries(Object.entries(model).map(([k,o])=>[k,o.value]));
+  renderCfg();
 }
+
+function humanize(k){
+  return k.replace(/^b(?=[A-Z])/,'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/_/g,' ').trim();
+}
+
+function renderCfg(){
+  const q=(val('cfgSearch')||'').toLowerCase();
+  const keys=Object.keys(CFG_MODEL).sort();
+  const html=keys.filter(k=>!q||k.toLowerCase().includes(q)||humanize(k).toLowerCase().includes(q)).map(k=>{
+    const o=CFG_MODEL[k];
+    const name=`${humanize(k)}<br><span class="muted" style="font-size:10px">${k}</span>`;
+    if(o.type==='boolean'){
+      return `<label class="row" style="gap:8px;align-items:flex-start">
+        <input type="checkbox" data-key="${k}" ${o.value?'checked':''} style="width:auto;margin-top:2px">
+        <span>${name}</span></label>`;
+    }
+    let field;
+    if(o.type==='number'){
+      field=`<input type="number" step="any" data-key="${k}" value="${o.value}">`;
+    } else if(ENUMS[k]){
+      field=`<select data-key="${k}">`+ENUMS[k].map(opt=>
+        `<option ${opt===o.value?'selected':''}>${opt}</option>`).join('')+`</select>`;
+    } else {
+      const type=SECRET_KEYS.includes(k)?'password':'text';
+      field=`<input type="${type}" data-key="${k}" value="${String(o.value).replace(/"/g,'&quot;')}">`;
+    }
+    return `<div><label>${name}</label>${field}</div>`;
+  }).join('');
+  $('#cfgForm').innerHTML=html||'<span class="muted">Nenhuma configuração corresponde ao filtro.</span>';
+}
+
 async function saveForm(){
-  const opts={};
-  document.querySelectorAll('#cfgForm input').forEach(i=>{
-    const v=i.value.trim();if(v!=='')opts[i.dataset.key]=v;
+  const changed={};
+  document.querySelectorAll('#cfgForm [data-key]').forEach(el=>{
+    const k=el.dataset.key; let v;
+    if(el.type==='checkbox')v=el.checked;
+    else if(el.type==='number')v=el.value===''?CFG_ORIG[k]:Number(el.value);
+    else v=el.value;
+    if(v!==CFG_ORIG[k])changed[k]=v;
   });
+  const n=Object.keys(changed).length;
+  if(n===0){toast('Nada mudou');return;}
   const restart=$('#cfgRestart').checked;
-  const r=await api('POST','/api/config?restart='+restart,{options:opts});
-  if(r.ok)toast(restart?'Salvo e reiniciando':'Salvo');else toast('Erro ao salvar',false);
-  if(r.ok)loadConfig();
+  const r=await api('POST','/api/config?restart='+restart,{options:changed});
+  if(r.ok){toast(`Salvo (${n} campo${n>1?'s':''})`+(restart?' + reiniciando':''));loadConfig();}
+  else toast('Erro ao salvar',false);
 }
 async function saveRaw(){
   const restart=$('#cfgRestart').checked;
