@@ -120,9 +120,26 @@ def parse_options(raw: str) -> dict:
     return out
 
 
+# Keys whose values are free-form strings and MUST be quoted, even when the
+# value looks enum-like (e.g. an alphanumeric password). Palworld reads an
+# unquoted string value as empty.
+STRING_KEYS = {
+    "AdminPassword",
+    "ServerPassword",
+    "ServerName",
+    "ServerDescription",
+    "PublicIP",
+    "RCONPassword",
+    "Region",
+    "BanListURL",
+}
+
+
 def _format_value(key: str, value: str) -> str:
     """Reproduce Palworld's quoting: strings quoted, bools/nums/enums bare."""
     v = str(value)
+    if key in STRING_KEYS:
+        return '"' + v.replace('"', "") + '"'
     low = v.lower()
     if low in ("true", "false"):
         return v.capitalize() if v[0].islower() else v
