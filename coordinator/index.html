@@ -12,550 +12,426 @@
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   *{box-sizing:border-box}
+  [v-cloak]{display:none}
   body{margin:0;background:var(--bg);color:var(--text);
     font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   header{display:flex;align-items:center;gap:12px;padding:14px 20px;
     background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap}
   header h1{font-size:16px;margin:0;font-weight:600}
-  header .dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
-  header .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  header .dot.busy{background:var(--warn);box-shadow:0 0 8px var(--warn)}
-  header .dot.off{background:var(--danger)}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:4px 10px;
+    border-radius:999px;border:1px solid var(--border);background:var(--panel2)}
+  .pill .dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+  .pill.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .pill.busy .dot{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  .pill.off .dot{background:var(--danger)}
   header .meta{color:var(--muted);font-size:12px}
   header .spacer{flex:1}
-  nav{display:flex;gap:4px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--border)}
+  nav{display:flex;gap:4px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
   nav button{background:none;border:none;color:var(--muted);padding:12px 16px;cursor:pointer;
     font-size:14px;border-bottom:2px solid transparent}
   nav button.active{color:var(--text);border-bottom-color:var(--accent)}
-  #vmBanner{background:var(--panel2);border-bottom:1px solid var(--warn);padding:12px 20px;
-    display:flex;align-items:center;gap:14px;color:var(--text)}
-  main{max-width:960px;margin:0 auto;padding:20px}
-  .tab{display:none}.tab.active{display:block}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-    padding:16px 18px;margin-bottom:16px}
-  .card h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  #banner{background:var(--panel2);border-bottom:1px solid var(--warn);padding:12px 20px;
+    display:flex;align-items:center;gap:14px}
+  main{max-width:980px;margin:0 auto;padding:20px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px}
+  .card h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
   label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
   input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--border);
     color:var(--text);border-radius:7px;padding:8px 10px;font:inherit}
-  textarea{font-family:var(--mono);font-size:12px;min-height:340px;resize:vertical;white-space:pre}
+  textarea{font-family:var(--mono);font-size:12px;min-height:320px;resize:vertical;white-space:pre}
   input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   .row.end{justify-content:flex-end}
-  button.btn{background:var(--accent2);border:1px solid var(--accent);color:#fff;
-    padding:8px 14px;border-radius:7px;cursor:pointer;font:inherit}
-  button.btn:hover{background:var(--accent)}
-  button.btn.ghost{background:transparent;border-color:var(--border);color:var(--text)}
-  button.btn.ghost:hover{border-color:var(--accent)}
-  button.btn.ok{background:#1f7a34;border-color:var(--ok)}
-  button.btn.ok:hover{background:var(--ok)}
-  button.btn.danger{background:var(--danger2);border-color:var(--danger)}
-  button.btn.danger:hover{background:var(--danger)}
-  button.btn:disabled{opacity:.5;cursor:default}
+  .btn{background:var(--accent2);border:1px solid var(--accent);color:#fff;padding:8px 14px;
+    border-radius:7px;cursor:pointer;font:inherit}
+  .btn:hover{background:var(--accent)}
+  .btn.ghost{background:transparent;border-color:var(--border);color:var(--text)}
+  .btn.ghost:hover{border-color:var(--accent)}
+  .btn.ok{background:#1f7a34;border-color:var(--ok)}
+  .btn.ok:hover{background:var(--ok)}
+  .btn.danger{background:var(--danger2);border-color:var(--danger)}
+  .btn.danger:hover{background:var(--danger)}
+  .btn:disabled{opacity:.5;cursor:default}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px}
   .kv .k{color:var(--muted)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px;border-bottom:1px solid var(--border)}
   th{color:var(--muted);font-weight:500}
   td .mono{font-family:var(--mono);font-size:12px;color:var(--muted)}
-  details{margin-top:8px}summary{cursor:pointer;color:var(--muted);margin-bottom:8px}
   details.section{margin:0 0 10px;border:1px solid var(--border);border-radius:9px;background:var(--panel2);overflow:hidden}
   details.section>summary{list-style:none;margin:0;padding:12px 14px;color:var(--text);font-weight:600;
-    display:flex;align-items:center;gap:10px;user-select:none}
+    display:flex;align-items:center;gap:10px;user-select:none;cursor:pointer}
   details.section>summary::-webkit-details-marker{display:none}
   details.section>summary::before{content:"▸";color:var(--muted);transition:transform .15s}
   details.section[open]>summary::before{transform:rotate(90deg)}
   details.section>summary .count{margin-left:auto;color:var(--muted);font-weight:400;font-size:12px}
-  details.section>summary:hover{background:var(--panel)}
   details.section .grid{padding:14px}
-  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-    background:var(--panel2);border:1px solid var(--border);border-radius:8px;
-    padding:10px 18px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw}
-  .toast.show{opacity:1}
-  .toast.ok{border-color:var(--ok)}.toast.err{border-color:var(--danger)}
-  .muted{color:var(--muted)}
   .metric{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
   .metric .n{font-size:22px;font-weight:600}.metric .l{font-size:11px;color:var(--muted);text-transform:uppercase}
-  #login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100}
-  #login .box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:28px;width:320px;max-width:92vw}
-  #login h1{margin:0 0 4px;font-size:18px}
-  #login p{margin:0 0 18px;color:var(--muted);font-size:13px}
-  #login label{margin-top:12px}
-  #login .btn{width:100%;margin-top:18px;justify-content:center}
-  #login .err{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
-  #app{display:none}
+  .badge{font-size:11px;border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-right:4px;color:var(--muted)}
+  .muted{color:var(--muted)}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--border);border-radius:8px;padding:10px 18px;max-width:90vw;transition:.25s}
+  .toast.ok{border-color:var(--ok)}.toast.err{border-color:var(--danger)}
+  .login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center}
+  .login .box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:28px;width:320px;max-width:92vw}
+  .login h1{margin:0 0 4px;font-size:18px}.login p{margin:0 0 18px;color:var(--muted);font-size:13px}
+  .login label{margin-top:12px}.login .btn{width:100%;margin-top:18px;justify-content:center;text-align:center}
+  .err{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
+  .switch{display:flex;align-items:flex-start;gap:8px}
+  .switch input{width:auto;margin-top:3px}
 </style>
 </head>
 <body>
-<div id="login">
-  <form class="box" onsubmit="doLogin(event)">
-    <h1>Palworld Coordinator</h1>
-    <p>Entre com as credenciais do painel.</p>
-    <label>Usuário</label>
-    <input id="loginUser" autocomplete="username" autofocus>
-    <label>Senha</label>
-    <input id="loginPass" type="password" autocomplete="current-password">
-    <button class="btn" type="submit">Entrar</button>
-    <div class="err" id="loginErr"></div>
-  </form>
-</div>
+<div id="app" v-cloak>
 
-<div id="app">
-<header>
-  <span class="dot" id="statusDot"></span>
-  <h1 id="serverName">Palworld</h1>
-  <span class="meta" id="serverMeta"></span>
-  <span class="meta" id="vmState"></span>
-  <span class="spacer"></span>
-  <button class="btn ok" id="btnStart" onclick="startVm()" style="display:none">▶ Ligar servidor</button>
-  <button class="btn danger" id="btnStop" onclick="stopVm()" style="display:none">■ Desligar</button>
-  <button class="btn ghost" onclick="loadStatus()">↻</button>
-  <button class="btn ghost" onclick="logout()">Sair</button>
-</header>
-<div id="vmBanner" style="display:none"></div>
-<nav>
-  <button data-tab="status" data-perm="view" class="active">Status</button>
-  <button data-tab="config" data-perm="config">Configurações</button>
-  <button data-tab="commands" data-perm="commands">Comandos</button>
-  <button data-tab="users" data-perm="users">Usuários</button>
-</nav>
+  <!-- LOGIN -->
+  <div class="login" v-if="!authed">
+    <form class="box" @submit.prevent="login">
+      <h1>Palworld Coordinator</h1>
+      <p>Entre com as credenciais do painel.</p>
+      <label>Usuário</label>
+      <input v-model.trim="loginUser" autocomplete="username" autofocus>
+      <label>Senha</label>
+      <input v-model="loginPass" type="password" autocomplete="current-password">
+      <button class="btn" type="submit">Entrar</button>
+      <div class="err">{{ loginErr }}</div>
+    </form>
+  </div>
 
-<main>
-  <!-- STATUS -->
-  <section class="tab active" id="tab-status">
-    <div class="card">
-      <h2>Métricas</h2>
-      <div class="grid" id="metrics"><span class="muted">—</span></div>
-    </div>
-    <div class="card">
-      <h2>Informações do servidor</h2>
-      <div class="kv" id="info"></div>
-    </div>
-    <div class="card">
-      <h2>Jogadores online</h2>
-      <table><thead><tr><th>Nome</th><th>Level</th><th>Ping</th><th>PlayerId / UserId</th></tr></thead>
-      <tbody id="players"><tr><td colspan="4" class="muted">—</td></tr></tbody></table>
-    </div>
-  </section>
+  <!-- APP -->
+  <template v-if="authed">
+    <header>
+      <h1>{{ serverName }}</h1>
+      <span class="meta" v-if="serverVersion">{{ serverVersion }}</span>
+      <span class="pill" :class="vmPillClass"><span class="dot"></span>{{ vmLabel }}</span>
+      <span class="spacer"></span>
+      <button class="btn ok" v-if="can('power') && canStart" @click="startVm">▶ Ligar servidor</button>
+      <button class="btn danger" v-if="can('power') && vm.status==='RUNNING'" @click="stopVm">■ Desligar</button>
+      <button class="btn ghost" @click="refresh">↻</button>
+      <button class="btn ghost" @click="logout">Sair</button>
+    </header>
 
-  <!-- CONFIG -->
-  <section class="tab" id="tab-config">
-    <div class="card">
-      <h2>Configurações do servidor</h2>
-      <input id="cfgSearch" placeholder="Filtrar configurações…" oninput="renderCfg()" style="margin-bottom:12px">
-      <div id="cfgForm"><span class="muted">—</span></div>
-      <div class="row end" style="margin-top:14px">
-        <label class="row" style="margin:0"><input type="checkbox" id="cfgRestart" style="width:auto"> reiniciar após salvar</label>
-        <button class="btn ghost" onclick="loadConfig()">Recarregar</button>
-        <button class="btn" onclick="saveForm()">Salvar campos</button>
-      </div>
-      <details>
-        <summary>Editor bruto do PalWorldSettings.ini</summary>
-        <textarea id="cfgRaw" spellcheck="false"></textarea>
-        <div class="row end" style="margin-top:10px">
-          <button class="btn" onclick="saveRaw()">Salvar arquivo bruto</button>
+    <nav>
+      <button v-for="t in visibleTabs" :key="t.id" :class="{active:tab===t.id}" @click="go(t.id)">{{ t.label }}</button>
+    </nav>
+
+    <div id="banner" v-if="vm.status && vm.status!=='RUNNING'">
+      <template v-if="vmBusy">Servidor em transição ({{ vm.status }})… aguarde.</template>
+      <template v-else>
+        <span>🔌 Servidor desligado ({{ vm.status }}).</span>
+        <button class="btn ok" v-if="can('power')" @click="startVm">▶ Ligar servidor</button>
+        <span class="muted" v-else>(sem permissão para ligar)</span>
+      </template>
+    </div>
+
+    <main>
+      <!-- STATUS -->
+      <section v-if="tab==='status'">
+        <div class="card">
+          <h2>Métricas</h2>
+          <div class="grid" v-if="metricsCells.length"><div class="metric" v-for="c in metricsCells" :key="c.l">
+            <div class="n">{{ c.v }}</div><div class="l">{{ c.l }}</div></div></div>
+          <span class="muted" v-else>{{ vm.status==='RUNNING' ? 'servidor subindo…' : 'servidor desligado' }}</span>
         </div>
-        <p class="muted" id="cfgPath"></p>
-      </details>
-    </div>
-  </section>
+        <div class="card" v-if="server && server.info">
+          <h2>Informações</h2>
+          <div class="kv"><template v-for="(v,k) in server.info" :key="k"><span class="k">{{ k }}</span><span>{{ v }}</span></template></div>
+        </div>
+        <div class="card">
+          <h2>Jogadores online ({{ players.length }})</h2>
+          <table><thead><tr><th>Nome</th><th>Level</th><th>Ping</th><th>UserId</th></tr></thead>
+          <tbody>
+            <tr v-for="p in players" :key="p.userId||p.name"><td>{{ p.name }}</td><td>{{ p.level }}</td>
+              <td>{{ p.ping!=null?Math.round(p.ping):'' }}</td><td class="mono">{{ p.userId }}</td></tr>
+            <tr v-if="!players.length"><td colspan="4" class="muted">{{ vm.status==='RUNNING' ? 'Ninguém online' : '—' }}</td></tr>
+          </tbody></table>
+        </div>
+      </section>
 
-  <!-- COMMANDS -->
-  <section class="tab" id="tab-commands">
-    <div class="card">
-      <h2>Anúncio</h2>
-      <div class="row"><input id="annMsg" placeholder="Mensagem para todos os jogadores">
-      <button class="btn" onclick="cmd('announce',{message:val('annMsg')})">Anunciar</button></div>
-    </div>
-    <div class="card">
-      <h2>Moderação</h2>
-      <label>UserId (steam_XXXX…)</label>
-      <input id="modUser" placeholder="steam_0123456789">
-      <label style="margin-top:8px">Mensagem (kick/ban)</label>
-      <input id="modMsg" placeholder="Motivo">
-      <div class="row" style="margin-top:10px">
-        <button class="btn" onclick="cmd('kick',{userid:val('modUser'),message:val('modMsg')})">Kick</button>
-        <button class="btn danger" onclick="cmd('ban',{userid:val('modUser'),message:val('modMsg')})">Ban</button>
-        <button class="btn ghost" onclick="cmd('unban',{userid:val('modUser')})">Unban</button>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Mundo</h2>
-      <div class="row"><button class="btn" onclick="cmd('save',{})">Salvar mundo</button></div>
-    </div>
-    <div class="card">
-      <h2>Encerrar servidor Palworld</h2>
-      <p class="muted">Encerra o processo do jogo (a VM continua ligada). Para desligar a máquina use “Desligar” no topo.</p>
-      <div class="row">
-        <div><label>Espera (s)</label><input id="shWait" type="number" value="30" style="width:100px"></div>
-        <div style="flex:1"><label>Mensagem</label><input id="shMsg" placeholder="Servidor reiniciando…"></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn danger" onclick="cmd('shutdown',{waittime:+val('shWait'),message:val('shMsg')})">Shutdown (gracioso)</button>
-        <button class="btn danger" onclick="if(confirm('Forçar parada imediata?'))cmd('stop',{})">Force Stop</button>
-      </div>
-    </div>
-  </section>
+      <!-- CONFIG -->
+      <section v-if="tab==='config'">
+        <div class="card">
+          <h2>Configurações do servidor</h2>
+          <div v-if="vm.status!=='RUNNING'" class="muted">Ligue o servidor para editar as configurações.</div>
+          <template v-else>
+            <input v-model="cfgSearch" placeholder="Filtrar configurações…" style="margin-bottom:12px">
+            <details class="section" v-for="g in cfgGroups" :key="g.title" open>
+              <summary>{{ g.title }}<span class="count">{{ g.items.length }}</span></summary>
+              <div class="grid">
+                <template v-for="it in g.items" :key="it.key">
+                  <label class="switch" v-if="it.type==='boolean'">
+                    <input type="checkbox" v-model="it.value">
+                    <span>{{ human(it.key) }}<br><span class="muted" style="font-size:10px">{{ it.key }}</span></span>
+                  </label>
+                  <div v-else>
+                    <label>{{ human(it.key) }}<br><span class="muted" style="font-size:10px">{{ it.key }}</span></label>
+                    <select v-if="enums[it.key]" v-model="it.value">
+                      <option v-for="o in enums[it.key]" :key="o" :value="o">{{ o }}</option></select>
+                    <input v-else-if="it.type==='number'" type="number" step="any" v-model.number="it.value">
+                    <input v-else :type="secret(it.key)?'password':'text'" v-model="it.value">
+                  </div>
+                </template>
+              </div>
+            </details>
+            <div class="row end" style="margin-top:14px">
+              <label class="row" style="margin:0"><input type="checkbox" v-model="cfgRestart" style="width:auto"> reiniciar após salvar</label>
+              <button class="btn ghost" @click="loadConfig">Recarregar</button>
+              <button class="btn" @click="saveConfig">Salvar campos</button>
+            </div>
+            <details style="margin-top:12px">
+              <summary class="muted" style="cursor:pointer">Editor bruto do PalWorldSettings.ini</summary>
+              <textarea v-model="cfgRaw" spellcheck="false" style="margin-top:8px"></textarea>
+              <div class="row end" style="margin-top:10px"><button class="btn" @click="saveRaw">Salvar arquivo bruto</button></div>
+              <p class="muted">{{ cfgPath }}</p>
+            </details>
+          </template>
+        </div>
+      </section>
 
-  <!-- USERS -->
-  <section class="tab" id="tab-users">
-    <div class="card">
-      <h2 id="userFormTitle">Adicionar usuário</h2>
-      <div class="grid">
-        <div><label>Usuário</label><input id="uName" placeholder="nome de login"></div>
-        <div><label>Senha</label><input id="uPass" type="password" placeholder="(deixe vazio p/ manter ao editar)"></div>
-      </div>
-      <label style="margin-top:12px">Permissões</label>
-      <div class="row" id="uPerms" style="gap:16px"></div>
-      <div class="row end" style="margin-top:14px">
-        <button class="btn ghost" onclick="resetUserForm()">Limpar</button>
-        <button class="btn" onclick="saveUser()">Salvar usuário</button>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Usuários</h2>
-      <table><thead><tr><th>Usuário</th><th>Permissões</th><th></th></tr></thead>
-      <tbody id="usersBody"><tr><td colspan="3" class="muted">Carregando…</td></tr></tbody></table>
-    </div>
-  </section>
-</main>
+      <!-- COMMANDS -->
+      <section v-if="tab==='commands'">
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Servidor desligado.</span></div>
+        <template v-else>
+          <div class="card"><h2>Anúncio</h2>
+            <div class="row"><input v-model="ann" placeholder="Mensagem para todos"><button class="btn" @click="cmd('announce',{message:ann})">Anunciar</button></div></div>
+          <div class="card"><h2>Moderação</h2>
+            <label>UserId</label><input v-model="modUser" placeholder="steam_0123456789">
+            <label style="margin-top:8px">Mensagem</label><input v-model="modMsg" placeholder="Motivo">
+            <div class="row" style="margin-top:10px">
+              <button class="btn" @click="cmd('kick',{userid:modUser,message:modMsg})">Kick</button>
+              <button class="btn danger" @click="cmd('ban',{userid:modUser,message:modMsg})">Ban</button>
+              <button class="btn ghost" @click="cmd('unban',{userid:modUser})">Unban</button></div></div>
+          <div class="card"><h2>Mundo</h2><div class="row"><button class="btn" @click="cmd('save',{})">Salvar mundo</button></div></div>
+          <div class="card"><h2>Encerrar servidor Palworld</h2>
+            <p class="muted">Encerra o jogo (a VM segue ligada). Para desligar a máquina use “Desligar” no topo.</p>
+            <div class="row"><div><label>Espera (s)</label><input type="number" v-model.number="shWait" style="width:100px"></div>
+              <div style="flex:1"><label>Mensagem</label><input v-model="shMsg" placeholder="Reiniciando…"></div></div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn danger" @click="cmd('shutdown',{waittime:shWait,message:shMsg})">Shutdown</button>
+              <button class="btn danger" @click="confirmStop">Force Stop</button></div></div>
+        </template>
+      </section>
+
+      <!-- WATCHDOG -->
+      <section v-if="tab==='watchdog'">
+        <div class="card">
+          <h2>Watchdog — desligamento automático</h2>
+          <p class="muted">Desliga a VM depois de ficar vazia pelo tempo de tolerância. Vale imediatamente (sem recriar a VM).</p>
+          <div class="grid">
+            <div><label>Intervalo de checagem (segundos) — 10 a 3600</label>
+              <input type="number" v-model.number="wd.poll_seconds" min="10" max="3600"></div>
+            <div><label>Tolerância de ociosidade (minutos) — 1 a 1440</label>
+              <input type="number" v-model.number="wdGraceMin" min="1" max="1440"></div>
+          </div>
+          <p class="muted">Grava: checa a cada {{ wd.poll_seconds }}s, desliga após {{ wdGraceMin }} min vazio.</p>
+          <div class="row end"><button class="btn ghost" @click="loadWatchdog">Recarregar</button>
+            <button class="btn" @click="saveWatchdog">Salvar</button></div>
+        </div>
+      </section>
+
+      <!-- USERS -->
+      <section v-if="tab==='users'">
+        <div class="card">
+          <h2>{{ userForm.editing ? 'Editar usuário: '+userForm.username : 'Adicionar usuário' }}</h2>
+          <div class="grid">
+            <div><label>Usuário</label><input v-model.trim="userForm.username" :readonly="userForm.editing"></div>
+            <div><label>Senha {{ userForm.editing ? '(vazio = manter)' : '' }}</label><input type="password" v-model="userForm.password"></div>
+          </div>
+          <label style="margin-top:12px">Permissões</label>
+          <div class="row" style="gap:16px">
+            <label class="row" style="gap:6px;margin:0" v-for="p in allPerms" :key="p">
+              <input type="checkbox" :value="p" v-model="userForm.perms" style="width:auto"> {{ permLabels[p]||p }}</label>
+          </div>
+          <div class="row end" style="margin-top:14px">
+            <button class="btn ghost" @click="resetUserForm">Limpar</button>
+            <button class="btn" @click="saveUser">Salvar usuário</button></div>
+        </div>
+        <div class="card">
+          <h2>Usuários</h2>
+          <table><thead><tr><th>Usuário</th><th>Permissões</th><th></th></tr></thead><tbody>
+            <tr v-for="u in users" :key="u.username">
+              <td>{{ u.username }}<span class="muted" v-if="u.username===me.user"> (você)</span></td>
+              <td><span class="badge" v-for="p in u.perms" :key="p">{{ permLabels[p]||p }}</span></td>
+              <td style="text-align:right;white-space:nowrap">
+                <button class="btn ghost" @click="editUser(u)">Editar</button>
+                <button class="btn danger" @click="delUser(u.username)" :disabled="u.username===me.user">Excluir</button></td></tr>
+            <tr v-if="!users.length"><td colspan="3" class="muted">Nenhum usuário</td></tr>
+          </tbody></table>
+        </div>
+      </section>
+    </main>
+  </template>
+
+  <div class="toast" :class="toast.ok?'ok':'err'" v-if="toast.show">{{ toast.msg }}</div>
 </div>
 
-<div class="toast" id="toast"></div>
-
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
 <script>
-const $=s=>document.querySelector(s);
-const val=id=>$('#'+id).value.trim();
-// A função fica montada sob /palworld-coordinator; prefixa as chamadas de API.
 const API=location.pathname.replace(/\/+$/,'');
-function toast(msg,ok=true){const t=$('#toast');t.textContent=msg;
-  t.className='toast show '+(ok?'ok':'err');setTimeout(()=>t.className='toast',2600);}
-
-// ---- auth (HTTP Basic, stored client-side) ----
-const AUTH_KEY='pw_auth';
-let AUTH=localStorage.getItem(AUTH_KEY)||'';
-function showLogin(){$('#login').style.display='flex';$('#app').style.display='none';}
-function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
-function logout(){AUTH='';localStorage.removeItem(AUTH_KEY);stopTimers();showLogin();}
-let ME={perms:[]}, HAS_POWER=false;
-const PERM_LABELS={view:'Ver status',power:'Ligar/Desligar',config:'Editar config',commands:'Comandos',users:'Gerenciar usuários'};
-function onLogin(d){ ME=d||{perms:[]}; applyPerms(); start(); }
-function applyPerms(){
-  const p=ME.perms||[];
-  document.querySelectorAll('nav button').forEach(b=>{
-    b.style.display=p.includes(b.dataset.perm)?'':'none';
-  });
-  HAS_POWER=p.includes('power');
-  const active=document.querySelector('nav button.active');
-  if(!active||active.style.display==='none'){
-    const first=[...document.querySelectorAll('nav button')].find(b=>b.style.display!=='none');
-    if(first)first.click();
-  }
-}
-async function doLogin(e){
-  e.preventDefault();
-  const u=val('loginUser'),p=$('#loginPass').value;
-  const token=btoa(u+':'+p);
-  const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+token}});
-  if(r.ok){AUTH=token;localStorage.setItem(AUTH_KEY,token);$('#loginErr').textContent='';onLogin(await r.json());}
-  else{$('#loginErr').textContent='Credenciais inválidas';}
-}
-
-// tabs
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');$('#tab-'+b.dataset.tab).classList.add('active');
-  if(b.dataset.tab==='config'&&VM_STATE==='RUNNING')loadConfig();
-  if(b.dataset.tab==='users')loadUsers();
-});
-function curTab(){const b=document.querySelector('nav button.active');return b?b.dataset.tab:'status';}
-
-async function api(method,path,body){
-  const opt={method,headers:{}};
-  if(AUTH)opt.headers['Authorization']='Basic '+AUTH;
-  if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
-  const r=await fetch(API+path,opt);
-  let data;try{data=await r.json();}catch{data={};}
-  if(r.status===401){logout();}
-  return {ok:r.ok,status:r.status,data};
-}
-
-// ---- VM power (coordinator) ----
-let VM_STATE='';
-async function pollVm(){
-  const r=await api('GET','/api/vm/status');
-  if(!r.ok)return;
-  const st=r.data.status, prev=VM_STATE; VM_STATE=st;
-  $('#vmState').textContent='VM: '+st;
-  const running=st==='RUNNING';
-  const busy=/STOP|STAG|PROV|REPAIR|SUSPEND/.test(st);
-  $('#statusDot').className='dot '+(running?'on':(busy?'busy':'off'));
-  $('#btnStart').style.display=(HAS_POWER&&!running&&!busy)?'inline-block':'none';
-  $('#btnStop').style.display=(HAS_POWER&&running)?'inline-block':'none';
-  const banner=$('#vmBanner');
-  if(running){
-    banner.style.display='none';
-    if(prev!=='RUNNING'){loadStatus(); if(curTab()==='config')loadConfig();}
-    ensureStatusTimer();
-  }else{
-    stopStatusTimer();
-    banner.style.display='flex';
-    const startBtn=HAS_POWER?`<button class="btn ok" onclick="startVm()">▶ Ligar servidor</button>`:'<span class="muted">(sem permissão para ligar)</span>';
-    banner.innerHTML = busy
-      ? `<span>Servidor em transição (${st})… aguarde.</span>`
-      : `<span>🔌 Servidor desligado (${st}).</span>`+startBtn;
-    $('#metrics').innerHTML='<span class="muted">servidor desligado</span>';
-    $('#players').innerHTML='<tr><td colspan="4" class="muted">servidor desligado</td></tr>';
-    $('#serverName').textContent='Palworld';$('#serverMeta').textContent='';
-  }
-}
-async function startVm(){
-  const r=await api('POST','/api/vm/start',{});
-  if(r.ok)toast('Ligando… o servidor leva ~2-3min pra subir');
-  else toast('Falha ao ligar ('+r.status+')',false);
-  setTimeout(pollVm,3000);
-}
-async function stopVm(){
-  if(!confirm('Desligar a máquina (VM)? Jogadores serão desconectados.'))return;
-  const r=await api('POST','/api/vm/stop',{});
-  if(r.ok)toast('Desligando a VM…');else toast('Falha ao desligar',false);
-  setTimeout(pollVm,3000);
-}
-
-// ---- status ----
-async function loadStatus(){
-  if(VM_STATE!=='RUNNING'){return;}
-  const m=await api('GET','/api/rest/metrics');
-  if(m.ok)renderMetrics(m.data);
-  else $('#metrics').innerHTML='<span class="muted">REST API subindo… ('+m.status+')</span>';
-  const info=await api('GET','/api/rest/info');
-  if(info.ok){
-    $('#serverName').textContent=info.data.servername||'Palworld';
-    $('#serverMeta').textContent=info.data.version||'';
-    $('#info').innerHTML=Object.entries(info.data).map(([k,v])=>
-      `<span class="k">${k}</span><span>${v}</span>`).join('');
-  }
-  const p=await api('GET','/api/rest/players');
-  const tb=$('#players');
-  if(p.ok&&p.data.players){
-    tb.innerHTML=p.data.players.length? p.data.players.map(pl=>
-      `<tr><td>${pl.name??''}</td><td>${pl.level??''}</td><td>${pl.ping!=null?Math.round(pl.ping):''}</td>
-       <td class="mono">${pl.playerId??''}<br>${pl.userId??''}</td></tr>`).join('')
-      :'<tr><td colspan="4" class="muted">Ninguém online</td></tr>';
-  }else tb.innerHTML='<tr><td colspan="4" class="muted">—</td></tr>';
-}
-function renderMetrics(d){
-  const cells=[['FPS','serverfps'],['Jogadores','currentplayernum'],['Máx','maxplayernum'],
-    ['Uptime (s)','uptime'],['Frametime','serverframetime'],['Dias','days']];
-  $('#metrics').innerHTML=cells.filter(([_,k])=>d[k]!=null).map(([l,k])=>
-    `<div class="metric"><div class="n">${d[k]}</div><div class="l">${l}</div></div>`).join('')
-    ||'<span class="muted">sem métricas</span>';
-}
-
-// ---- config (schema-driven, populated from live server defaults) ----
-const ENUMS={
-  Difficulty:['None','Casual','Normal','Hard'],
-  DeathPenalty:['None','Item','ItemAndEquipment','All'],
-  LogFormatType:['Text','Json'],
-};
+const ENUMS={Difficulty:['None','Casual','Normal','Hard'],DeathPenalty:['None','Item','ItemAndEquipment','All'],LogFormatType:['Text','Json']};
 const SECRET_KEYS=['AdminPassword','ServerPassword'];
-let CFG_MODEL={}, CFG_ORIG={};
-
-async function loadConfig(){
-  if(VM_STATE!=='RUNNING'){$('#cfgForm').innerHTML='<span class="muted">Ligue o servidor para editar as configurações.</span>';return;}
-  const [set,cfg]=await Promise.all([
-    api('GET','/api/rest/settings'),
-    api('GET','/api/config'),
-  ]);
-  const eff=set.ok?set.data:{};
-  const iniOpts=cfg.ok?(cfg.data.options||{}):{};
-  $('#cfgRaw').value=cfg.ok?(cfg.data.raw||''):'';
-  $('#cfgPath').textContent=cfg.ok?(cfg.data.path||''):'';
-  if(!set.ok){
-    $('#cfgForm').innerHTML='<span class="muted">Servidor REST indisponível — use o editor bruto abaixo.</span>';
-    return;
-  }
-  const model={};
-  for(const [k,v] of Object.entries(eff)){
-    if(Array.isArray(v))continue;
-    model[k]={value:v,type:typeof v};
-  }
-  SECRET_KEYS.forEach(k=>{ if(!(k in model))model[k]={value:iniOpts[k]??'',type:'string'}; });
-  CFG_MODEL=model;
-  CFG_ORIG=Object.fromEntries(Object.entries(model).map(([k,o])=>[k,o.value]));
-  renderCfg();
-}
-
-function humanize(k){
-  return k.replace(/^b(?=[A-Z])/,'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/_/g,' ').trim();
-}
-
-const SERVER_KEYS=new Set(['ServerName','ServerDescription','ServerPlayerMaxNum','CoopPlayerMaxNum',
-  'PublicPort','PublicIP','Region','bUseAuth','BanListURL','bAllowClientMod','bShowPlayerList',
-  'ChatPostLimitPerMinute','bIsMultiplay','ServerPassword','AdminPassword','CrossplayPlatforms',
-  'LogFormatType','bIsShowJoinLeftMessage','ServerReplicatePawnCullDistance']);
-const WORLD_KEYS=new Set(['Difficulty','RandomizerType','RandomizerSeed','bIsRandomizerPalLevelRandom',
-  'DayTimeSpeedRate','NightTimeSpeedRate','DeathPenalty','bHardcore','bPalLost',
-  'bCharacterRecreateInHardcore','autoSaveSpan','bIsUseBackupSaveData','SupplyDropSpan',
-  'EnablePredatorBossPal','bEnableInvaderEnemy','bActiveUNKO']);
+const SERVER_KEYS=new Set(['ServerName','ServerDescription','ServerPlayerMaxNum','CoopPlayerMaxNum','PublicPort','PublicIP','Region','bUseAuth','BanListURL','bAllowClientMod','bShowPlayerList','ChatPostLimitPerMinute','bIsMultiplay','ServerPassword','AdminPassword','CrossplayPlatforms','LogFormatType','bIsShowJoinLeftMessage','ServerReplicatePawnCullDistance']);
+const WORLD_KEYS=new Set(['Difficulty','RandomizerType','RandomizerSeed','bIsRandomizerPalLevelRandom','DayTimeSpeedRate','NightTimeSpeedRate','DeathPenalty','bHardcore','bPalLost','bCharacterRecreateInHardcore','autoSaveSpan','bIsUseBackupSaveData','SupplyDropSpan','EnablePredatorBossPal','bEnableInvaderEnemy','bActiveUNKO']);
 const SECTIONS=[
-  ['Servidor & Rede',   k=>SERVER_KEYS.has(k)],
-  ['API & RCON',        k=>/^REST|^RCON/.test(k)],
-  ['Voice Chat',        k=>/VoiceChat/i.test(k)],
-  ['PvP',               k=>/pvp/i.test(k)||k==='bEnablePlayerToPlayerDamage'||k==='bEnableFriendlyFire'],
-  ['Guild & Base',      k=>/Guild|BaseCamp|Build|AutoTransferMaster/.test(k)],
-  ['Pals',              k=>/^Pal/.test(k)],
-  ['Jogador',           k=>/Player|Respawn|Enhance|FastTravel|AimAssist|StartLocation|ExistPlayerAfterLogout|NonLoginPenalty/.test(k)],
-  ['Itens & Coleta',    k=>/Item|Drop|Collection|Palbox|Technology/.test(k)],
+  ['Servidor & Rede',k=>SERVER_KEYS.has(k)],
+  ['API & RCON',k=>/^REST|^RCON/.test(k)],
+  ['Voice Chat',k=>/VoiceChat/i.test(k)],
+  ['PvP',k=>/pvp/i.test(k)||k==='bEnablePlayerToPlayerDamage'||k==='bEnableFriendlyFire'],
+  ['Guild & Base',k=>/Guild|BaseCamp|Build|AutoTransferMaster/.test(k)],
+  ['Pals',k=>/^Pal/.test(k)],
+  ['Jogador',k=>/Player|Respawn|Enhance|FastTravel|AimAssist|StartLocation|ExistPlayerAfterLogout|NonLoginPenalty/.test(k)],
+  ['Itens & Coleta',k=>/Item|Drop|Collection|Palbox|Technology/.test(k)],
   ['Mundo & Dificuldade',k=>WORLD_KEYS.has(k)],
-  ['Taxas',             k=>/Rate|Multiplier|Speed/.test(k)],
-  ['Outros',            k=>true],
+  ['Taxas',k=>/Rate|Multiplier|Speed/.test(k)],
+  ['Outros',k=>true],
 ];
-const OPEN=new Set();
-function toggleSection(el,title){ if(el.open)OPEN.add(title); else OPEN.delete(title); }
+const TABS=[
+  {id:'status',label:'Status',perm:'view'},
+  {id:'config',label:'Configurações',perm:'config'},
+  {id:'commands',label:'Comandos',perm:'commands'},
+  {id:'watchdog',label:'Watchdog',perm:'config'},
+  {id:'users',label:'Usuários',perm:'users'},
+];
+const PERM_LABELS={view:'Ver status',power:'Ligar/Desligar',config:'Editar config',commands:'Comandos',users:'Gerenciar usuários'};
 
-function fieldHtml(k){
-  const o=CFG_MODEL[k];
-  const name=`${humanize(k)}<br><span class="muted" style="font-size:10px">${k}</span>`;
-  if(o.type==='boolean'){
-    return `<label class="row" style="gap:8px;align-items:flex-start">
-      <input type="checkbox" data-key="${k}" ${o.value?'checked':''} style="width:auto;margin-top:2px">
-      <span>${name}</span></label>`;
-  }
-  let field;
-  if(o.type==='number'){
-    field=`<input type="number" step="any" data-key="${k}" value="${o.value}">`;
-  } else if(ENUMS[k]){
-    field=`<select data-key="${k}">`+ENUMS[k].map(opt=>
-      `<option ${opt===o.value?'selected':''}>${opt}</option>`).join('')+`</select>`;
-  } else {
-    const type=SECRET_KEYS.includes(k)?'password':'text';
-    field=`<input type="${type}" data-key="${k}" value="${String(o.value).replace(/"/g,'&quot;')}">`;
-  }
-  return `<div><label>${name}</label>${field}</div>`;
-}
-
-function renderCfg(){
-  const q=(val('cfgSearch')||'').toLowerCase();
-  const match=k=>!q||k.toLowerCase().includes(q)||humanize(k).toLowerCase().includes(q);
-  const keys=Object.keys(CFG_MODEL).sort();
-  const used=new Set();
-  let out='';
-  for(const [title,test] of SECTIONS){
-    const inSec=keys.filter(k=>!used.has(k)&&test(k));
-    inSec.forEach(k=>used.add(k));
-    const shown=inSec.filter(match);
-    if(shown.length===0)continue;
-    const open=(q&&shown.length)||OPEN.has(title)?'open':'';
-    out+=`<details class="section" ${open} ontoggle="toggleSection(this,'${title.replace(/'/g,"\\'")}')">
-      <summary>${title}<span class="count">${shown.length}${q?'/'+inSec.length:''}</span></summary>
-      <div class="grid">${shown.map(fieldHtml).join('')}</div></details>`;
-  }
-  $('#cfgForm').innerHTML=out||'<span class="muted">Nenhuma configuração corresponde ao filtro.</span>';
-}
-
-async function saveForm(){
-  if(VM_STATE!=='RUNNING'){toast('Ligue o servidor primeiro',false);return;}
-  const changed={};
-  document.querySelectorAll('#cfgForm [data-key]').forEach(el=>{
-    const k=el.dataset.key; let v;
-    if(el.type==='checkbox')v=el.checked;
-    else if(el.type==='number')v=el.value===''?CFG_ORIG[k]:Number(el.value);
-    else v=el.value;
-    if(v!==CFG_ORIG[k])changed[k]=v;
-  });
-  const n=Object.keys(changed).length;
-  if(n===0){toast('Nada mudou');return;}
-  const restart=$('#cfgRestart').checked;
-  const r=await api('POST','/api/config?restart='+restart,{options:changed});
-  if(r.ok){toast(`Salvo (${n} campo${n>1?'s':''})`+(restart?' + reiniciando':''));loadConfig();}
-  else toast('Erro ao salvar',false);
-}
-async function saveRaw(){
-  if(VM_STATE!=='RUNNING'){toast('Ligue o servidor primeiro',false);return;}
-  const restart=$('#cfgRestart').checked;
-  const r=await api('POST','/api/config?restart='+restart,{raw:$('#cfgRaw').value});
-  if(r.ok)toast(restart?'Salvo e reiniciando':'Salvo');else toast('Erro ao salvar',false);
-}
-
-// ---- commands ----
-async function cmd(ep,body){
-  if(VM_STATE!=='RUNNING'){toast('Servidor desligado',false);return;}
-  const r=await api('POST','/api/rest/'+ep,body);
-  if(r.ok)toast('OK: '+ep);
-  else toast('Falha ('+r.status+'): '+(r.data.error||JSON.stringify(r.data)),false);
-  if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(loadStatus,1200);
-}
-
-// ---- users ----
-let ALL_PERMS=['view','power','config','commands','users'];
-function renderPermChecks(sel){
-  $('#uPerms').innerHTML=ALL_PERMS.map(p=>
-    `<label class="row" style="gap:6px;margin:0"><input type="checkbox" value="${p}" style="width:auto"
-      ${sel&&sel.includes(p)?'checked':''}> ${PERM_LABELS[p]||p}</label>`).join('');
-}
-function resetUserForm(){
-  $('#userFormTitle').textContent='Adicionar usuário';
-  $('#uName').value='';$('#uName').readOnly=false;$('#uPass').value='';
-  renderPermChecks(['view']);
-}
-async function loadUsers(){
-  const r=await api('GET','/api/users');
-  if(!r.ok){$('#usersBody').innerHTML=`<tr><td colspan="3" class="muted">Sem permissão ou erro (${r.status})</td></tr>`;return;}
-  ALL_PERMS=r.data.all_perms||ALL_PERMS;
-  if(!$('#uPerms').children.length)renderPermChecks(['view']);
-  const list=r.data.users||[];
-  $('#usersBody').innerHTML=list.length?list.map(u=>{
-    const badges=(u.perms||[]).map(p=>`<span class="muted" style="font-size:11px;border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-right:4px">${PERM_LABELS[p]||p}</span>`).join('');
-    const self=u.username===ME.user;
-    return `<tr><td>${u.username}${self?' <span class="muted">(você)</span>':''}</td><td>${badges||'<span class="muted">—</span>'}</td>
-      <td style="text-align:right;white-space:nowrap">
-        <button class="btn ghost" onclick='editUser(${JSON.stringify(u).replace(/'/g,"&#39;")})'>Editar</button>
-        <button class="btn danger" onclick="delUser('${u.username}')" ${self?'disabled':''}>Excluir</button></td></tr>`;
-  }).join(''):'<tr><td colspan="3" class="muted">Nenhum usuário</td></tr>';
-}
-function editUser(u){
-  $('#userFormTitle').textContent='Editar usuário: '+u.username;
-  $('#uName').value=u.username;$('#uName').readOnly=true;$('#uPass').value='';
-  renderPermChecks(u.perms||[]);
-  document.querySelector('[data-tab="users"]').scrollIntoView({behavior:'smooth'});
-}
-async function saveUser(){
-  const username=val('uName');
-  if(!username){toast('Informe o usuário',false);return;}
-  const perms=[...document.querySelectorAll('#uPerms input:checked')].map(i=>i.value);
-  const body={username,perms};
-  const pass=$('#uPass').value;
-  if(pass)body.password=pass;
-  const r=await api('POST','/api/users',body);
-  if(r.ok){toast('Usuário salvo');resetUserForm();loadUsers();}
-  else toast('Falha: '+(r.data.error||r.status),false);
-}
-async function delUser(username){
-  if(!confirm('Excluir usuário '+username+'?'))return;
-  const r=await api('DELETE','/api/users/'+encodeURIComponent(username));
-  if(r.ok){toast('Excluído');loadUsers();}
-  else toast('Falha: '+(r.data.error||r.status),false);
-}
-
-// ---- timers / boot ----
-let vmTimer=null, statusTimer=null;
-function ensureStatusTimer(){ if(!statusTimer)statusTimer=setInterval(loadStatus,15000); }
-function stopStatusTimer(){ if(statusTimer){clearInterval(statusTimer);statusTimer=null;} }
-function stopTimers(){ stopStatusTimer(); if(vmTimer){clearInterval(vmTimer);vmTimer=null;} }
-function start(){
-  showApp();
-  pollVm();
-  if(!vmTimer)vmTimer=setInterval(pollVm,8000);
-}
-(async()=>{
-  if(AUTH){
-    const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+AUTH}});
-    if(r.ok){onLogin(await r.json());return;}
-  }
-  showLogin();
-})();
+Vue.createApp({
+  data(){return{
+    auth:localStorage.getItem('pw_auth')||'', authed:false, me:{user:'',perms:[]},
+    loginUser:'', loginPass:'', loginErr:'',
+    tab:'status', vm:{status:'',ip:''}, server:null,
+    cfgModel:[], cfgOrig:{}, cfgRaw:'', cfgPath:'', cfgSearch:'', cfgRestart:false,
+    ann:'', modUser:'', modMsg:'', shWait:30, shMsg:'',
+    wd:{poll_seconds:60,grace_seconds:1800},
+    users:[], allPerms:['view','power','config','commands','users'],
+    userForm:{username:'',password:'',perms:['view'],editing:false},
+    permLabels:PERM_LABELS, enums:ENUMS,
+    toast:{show:false,ok:true,msg:''}, _timer:null,
+  }},
+  computed:{
+    visibleTabs(){return TABS.filter(t=>this.me.perms.includes(t.perm));},
+    vmBusy(){return /STOP|STAG|PROV|REPAIR|SUSPEND/.test(this.vm.status);},
+    canStart(){return this.vm.status && this.vm.status!=='RUNNING' && !this.vmBusy;},
+    vmPillClass(){return this.vm.status==='RUNNING'?'on':(this.vmBusy?'busy':'off');},
+    vmLabel(){return 'VM: '+(this.vm.status||'…');},
+    serverName(){return this.server&&this.server.info&&this.server.info.servername||'Palworld';},
+    serverVersion(){return this.server&&this.server.info&&this.server.info.version||'';},
+    players(){return this.server&&this.server.players||[];},
+    metricsCells(){
+      const m=this.server&&this.server.metrics; if(!m)return[];
+      const cells=[['FPS','serverfps'],['Jogadores','currentplayernum'],['Máx','maxplayernum'],
+        ['Uptime (s)','uptime'],['Frametime','serverframetime'],['Dias','days']];
+      return cells.filter(([l,k])=>m[k]!=null).map(([l,k])=>({l,v:m[k]}));
+    },
+    wdGraceMin:{get(){return Math.round(this.wd.grace_seconds/60);},set(v){this.wd.grace_seconds=Math.round(v*60);}},
+    cfgGroups(){
+      const q=this.cfgSearch.toLowerCase();
+      const match=it=>!q||it.key.toLowerCase().includes(q)||this.human(it.key).toLowerCase().includes(q);
+      const used=new Set(), groups=[];
+      for(const [title,test] of SECTIONS){
+        const items=this.cfgModel.filter(it=>!used.has(it.key)&&test(it.key));
+        items.forEach(it=>used.add(it.key));
+        const shown=items.filter(match);
+        if(shown.length)groups.push({title,items:shown});
+      }
+      return groups;
+    },
+  },
+  methods:{
+    can(p){return this.me.perms.includes(p);},
+    human(k){return k.replace(/^b(?=[A-Z])/,'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/_/g,' ').trim();},
+    secret(k){return SECRET_KEYS.includes(k);},
+    notify(msg,ok=true){this.toast={show:true,ok,msg};clearTimeout(this._t);this._t=setTimeout(()=>this.toast.show=false,2800);},
+    async api(method,path,body){
+      const opt={method,headers:{}};
+      if(this.auth)opt.headers['Authorization']='Basic '+this.auth;
+      if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
+      const r=await fetch(API+path,opt);
+      let data;try{data=await r.json();}catch{data={};}
+      if(r.status===401)this.logout();
+      return{ok:r.ok,status:r.status,data};
+    },
+    async login(){
+      const token=btoa(this.loginUser+':'+this.loginPass);
+      const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+token}});
+      if(r.ok){this.auth=token;localStorage.setItem('pw_auth',token);this.loginErr='';this.onAuth(await r.json());}
+      else this.loginErr='Credenciais inválidas';
+    },
+    logout(){this.auth='';localStorage.removeItem('pw_auth');this.authed=false;clearInterval(this._timer);this._timer=null;},
+    onAuth(d){
+      this.me=d; this.authed=true;
+      if(!this.visibleTabs.find(t=>t.id===this.tab))this.tab=(this.visibleTabs[0]||{id:'status'}).id;
+      this.refresh();
+      if(!this._timer)this._timer=setInterval(this.pollOverview,8000);
+    },
+    go(id){this.tab=id;if(id==='config')this.loadConfig();if(id==='users')this.loadUsers();if(id==='watchdog')this.loadWatchdog();},
+    refresh(){this.pollOverview();if(this.tab==='config')this.loadConfig();},
+    async pollOverview(){
+      const r=await this.api('GET','/api/overview');
+      if(r.ok){this.vm=r.data.vm||this.vm;this.server=r.data.server;}
+    },
+    async startVm(){const r=await this.api('POST','/api/vm/start',{});this.notify(r.ok?'Ligando… ~2-3min':'Falha ao ligar',r.ok);setTimeout(this.pollOverview,3000);},
+    async stopVm(){if(!confirm('Desligar a VM? Jogadores caem.'))return;const r=await this.api('POST','/api/vm/stop',{});this.notify(r.ok?'Desligando…':'Falha',r.ok);setTimeout(this.pollOverview,3000);},
+    confirmStop(){if(confirm('Forçar parada imediata do jogo?'))this.cmd('stop',{});},
+    async cmd(ep,body){
+      const r=await this.api('POST','/api/rest/'+ep,body);
+      this.notify(r.ok?('OK: '+ep):('Falha ('+r.status+'): '+(r.data.error||'')),r.ok);
+      if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(this.pollOverview,1200);
+    },
+    async loadConfig(){
+      if(this.vm.status!=='RUNNING')return;
+      const [set,cfg]=await Promise.all([this.api('GET','/api/rest/settings'),this.api('GET','/api/config')]);
+      const eff=set.ok?set.data:{}; const ini=cfg.ok?(cfg.data.options||{}):{};
+      this.cfgRaw=cfg.ok?(cfg.data.raw||''):''; this.cfgPath=cfg.ok?(cfg.data.path||''):'';
+      if(!set.ok){this.cfgModel=[];this.notify('Servidor REST indisponível',false);return;}
+      const model=[];
+      for(const [k,v] of Object.entries(eff)){if(Array.isArray(v))continue;model.push({key:k,value:v,type:typeof v});}
+      SECRET_KEYS.forEach(k=>{if(!model.find(m=>m.key===k))model.push({key:k,value:ini[k]??'',type:'string'});});
+      this.cfgModel=model;
+      this.cfgOrig=Object.fromEntries(model.map(m=>[m.key,m.value]));
+    },
+    async saveConfig(){
+      const changed={};
+      this.cfgModel.forEach(m=>{if(m.value!==this.cfgOrig[m.key])changed[m.key]=m.value;});
+      const n=Object.keys(changed).length;
+      if(!n){this.notify('Nada mudou');return;}
+      const r=await this.api('POST','/api/config?restart='+this.cfgRestart,{options:changed});
+      if(r.ok){this.notify('Salvo ('+n+')'+(this.cfgRestart?' + reiniciando':''));this.loadConfig();}else this.notify('Erro ao salvar',false);
+    },
+    async saveRaw(){const r=await this.api('POST','/api/config?restart='+this.cfgRestart,{raw:this.cfgRaw});this.notify(r.ok?'Salvo':'Erro',r.ok);},
+    async loadWatchdog(){const r=await this.api('GET','/api/watchdog');if(r.ok)this.wd={poll_seconds:r.data.poll_seconds,grace_seconds:r.data.grace_seconds};},
+    async saveWatchdog(){
+      const r=await this.api('POST','/api/watchdog',{poll_seconds:this.wd.poll_seconds,grace_seconds:this.wd.grace_seconds});
+      this.notify(r.ok?'Watchdog atualizado':('Falha: '+(r.data.error||r.status)),r.ok);
+    },
+    async loadUsers(){
+      const r=await this.api('GET','/api/users');
+      if(r.ok){this.users=r.data.users||[];this.allPerms=r.data.all_perms||this.allPerms;}
+    },
+    resetUserForm(){this.userForm={username:'',password:'',perms:['view'],editing:false};},
+    editUser(u){this.userForm={username:u.username,password:'',perms:[...u.perms],editing:true};},
+    async saveUser(){
+      if(!this.userForm.username){this.notify('Informe o usuário',false);return;}
+      const body={username:this.userForm.username,perms:this.userForm.perms};
+      if(this.userForm.password)body.password=this.userForm.password;
+      const r=await this.api('POST','/api/users',body);
+      if(r.ok){this.notify('Usuário salvo');this.resetUserForm();this.loadUsers();}else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    async delUser(username){
+      if(!confirm('Excluir '+username+'?'))return;
+      const r=await this.api('DELETE','/api/users/'+encodeURIComponent(username));
+      if(r.ok){this.notify('Excluído');this.loadUsers();}else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+  },
+  async mounted(){
+    if(this.auth){
+      const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+this.auth}});
+      if(r.ok){this.onAuth(await r.json());return;}
+    }
+    this.authed=false;
+  },
+}).mount('#app');
 </script>
 </body>
 </html>

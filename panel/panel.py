@@ -328,7 +328,7 @@ def build_app():
             raise HTTPException(500, f"rsync failed: {(e.stderr or b'').decode()}")
         # Restart after replying so the client gets a response first.
         subprocess.Popen(
-            ["bash", "-c", f"sleep 1; systemctl restart {SERVICE_NAME}-panel"]
+            ["bash", "-c", f"sleep 1; systemctl restart {SERVICE_NAME}-panel {SERVICE_NAME}-watchdog"]
         )
         return {"updated": True, "restarting": True}
 

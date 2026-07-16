@@ -61,13 +61,28 @@ def request_shutdown():
         return resp.status
 
 
+def fetch_config():
+    """Live timeout config from the coordinator; None on failure (use env)."""
+    if not COORDINATOR_URL:
+        return None
+    req = urllib.request.Request(f"{COORDINATOR_URL}/api/watchdog-config")
+    req.add_header("X-Internal-Token", INTERNAL_TOKEN)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            d = json.loads(resp.read().decode() or "{}")
+        return int(d["poll_seconds"]), int(d["grace_seconds"])
+    except (urllib.error.URLError, ValueError, KeyError, TimeoutError, OSError):
+        return None
+
+
 def main():
-    log(
-        f"start: poll={POLL_SECONDS}s grace={IDLE_GRACE_SECONDS}s "
-        f"coordinator={'set' if COORDINATOR_URL else 'MISSING'}"
-    )
+    log(f"start: coordinator={'set' if COORDINATOR_URL else 'MISSING'} (timeout is live-configurable)")
     empty_since = time.monotonic()  # treat boot as empty-start
     while True:
+        # live config from the coordinator; fall back to env defaults
+        cfg = fetch_config()
+        poll, grace = cfg if cfg else (POLL_SECONDS, IDLE_GRACE_SECONDS)
+
         n = player_count()
         now = time.monotonic()
         if n is None:
@@ -80,8 +95,8 @@ def main():
             if empty_since is None:
                 empty_since = now
             idle = int(now - empty_since)
-            log(f"empty for {idle}s / {IDLE_GRACE_SECONDS}s")
-            if idle >= IDLE_GRACE_SECONDS:
+            log(f"empty for {idle}s / {grace}s")
+            if idle >= grace:
                 if not COORDINATOR_URL or not INTERNAL_TOKEN:
                     log("ERROR: coordinator not configured; cannot shut down")
                 else:
@@ -92,7 +107,7 @@ def main():
                         return
                     except urllib.error.URLError as e:
                         log(f"shutdown request failed: {e}; will retry next cycle")
-        time.sleep(POLL_SECONDS)
+        time.sleep(poll)
 
 
 if __name__ == "__main__":
