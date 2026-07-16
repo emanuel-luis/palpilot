@@ -128,6 +128,9 @@ resource "google_cloudfunctions2_function" "coordinator" {
       PANEL_USER     = var.panel_user
       PANEL_PASSWORD = var.panel_password
       INTERNAL_TOKEN = var.internal_token
+
+      IDLE_POLL_DEFAULT  = tostring(var.idle_poll_seconds)
+      IDLE_GRACE_DEFAULT = tostring(var.idle_grace_seconds)
     }
   }
 
