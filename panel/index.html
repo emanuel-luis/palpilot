@@ -64,15 +64,39 @@
   .muted{color:var(--muted)}
   .metric{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
   .metric .n{font-size:22px;font-weight:600}.metric .l{font-size:11px;color:var(--muted);text-transform:uppercase}
+  #login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100}
+  #login .box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:28px;width:320px;max-width:92vw}
+  #login h1{margin:0 0 4px;font-size:18px}
+  #login p{margin:0 0 18px;color:var(--muted);font-size:13px}
+  #login label{margin-top:12px}
+  #login .btn{width:100%;margin-top:18px;justify-content:center}
+  #login .err{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
+  #app{display:none}
 </style>
 </head>
 <body>
+<div id="login">
+  <form class="box" onsubmit="doLogin(event)">
+    <h1>Palworld Panel</h1>
+    <p>Entre com as credenciais do painel.</p>
+    <label>Usuário</label>
+    <input id="loginUser" autocomplete="username" autofocus>
+    <label>Senha</label>
+    <input id="loginPass" type="password" autocomplete="current-password">
+    <button class="btn" type="submit">Entrar</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</div>
+
+<div id="app">
 <header>
   <span class="dot" id="statusDot"></span>
   <h1 id="serverName">Palworld Panel</h1>
   <span class="meta" id="serverMeta"></span>
   <span class="spacer"></span>
-  <button class="btn ghost" onclick="loadStatus()">↻ Atualizar</button>
+  <button class="btn ghost" onclick="loadStatus()">↻ Status</button>
+  <button class="btn ghost" onclick="selfUpdate()" title="Puxa o código mais recente do bucket e reinicia o painel">⇩ Atualizar painel</button>
+  <button class="btn ghost" onclick="logout()">Sair</button>
 </header>
 <nav>
   <button data-tab="status" class="active">Status</button>
@@ -155,6 +179,7 @@
     </div>
   </section>
 </main>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -163,6 +188,27 @@ const $=s=>document.querySelector(s);
 const val=id=>$('#'+id).value.trim();
 function toast(msg,ok=true){const t=$('#toast');t.textContent=msg;
   t.className='toast show '+(ok?'ok':'err');setTimeout(()=>t.className='toast',2600);}
+
+// ---- auth (HTTP Basic, stored client-side) ----
+const AUTH_KEY='pw_auth';
+let AUTH=localStorage.getItem(AUTH_KEY)||'';   // base64 "user:pass"
+function showLogin(){$('#login').style.display='flex';$('#app').style.display='none';}
+function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
+function logout(){AUTH='';localStorage.removeItem(AUTH_KEY);showLogin();}
+async function doLogin(e){
+  e.preventDefault();
+  const u=val('loginUser'),p=$('#loginPass').value;
+  const token=btoa(u+':'+p);
+  const r=await fetch('/api/session',{headers:{Authorization:'Basic '+token}});
+  if(r.ok){AUTH=token;localStorage.setItem(AUTH_KEY,token);$('#loginErr').textContent='';start();}
+  else{$('#loginErr').textContent='Credenciais inválidas';}
+}
+async function selfUpdate(){
+  if(!confirm('Puxar o código mais recente do bucket e reiniciar o painel?'))return;
+  const r=await api('POST','/api/self-update',{});
+  if(r.ok){toast('Atualizando… recarregando em 3s');setTimeout(()=>location.reload(),3000);}
+  else toast('Falha no update: '+(r.data.detail||r.status),false);
+}
 
 // tabs
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
@@ -174,9 +220,11 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 
 async function api(method,path,body){
   const opt={method,headers:{}};
+  if(AUTH)opt.headers['Authorization']='Basic '+AUTH;
   if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
   const r=await fetch(path,opt);
   let data;try{data=await r.json();}catch{data={};}
+  if(r.status===401){logout();}
   return {ok:r.ok,status:r.status,data};
 }
 
@@ -266,8 +314,20 @@ async function cmd(ep,body){
   if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(loadStatus,1200);
 }
 
-loadStatus();
-setInterval(loadStatus,15000);
+let statusTimer=null;
+function start(){
+  showApp();
+  loadStatus();
+  if(!statusTimer)statusTimer=setInterval(loadStatus,15000);
+}
+// boot: validate stored creds, else show login
+(async()=>{
+  if(AUTH){
+    const r=await fetch('/api/session',{headers:{Authorization:'Basic '+AUTH}});
+    if(r.ok){start();return;}
+  }
+  showLogin();
+})();
 </script>
 </body>
 </html>

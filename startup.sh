@@ -111,14 +111,23 @@ meta() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
 PANEL_DIR="/opt/palworld-panel"
 mkdir -p "$PANEL_DIR"
 
-meta panel-py   > "$PANEL_DIR/panel.py"
-meta panel-html > "$PANEL_DIR/index.html"
-
+PANEL_BUCKET="$(meta panel-bucket)"
 PANEL_PORT="$(meta panel-port)"
 PANEL_USER="$(meta panel-user)"
 PANEL_PASSWORD="$(meta panel-password)"
 ADMIN_PASSWORD="$(meta admin-password)"
 REST_API_PORT="$(meta rest-api-port)"
+
+# Panel code lives in GCS so it can be updated without terraform/recreate.
+# Retry in case the objects are still being uploaded on first boot.
+for attempt in 1 2 3 4 5 6; do
+    if gsutil cp "gs://$PANEL_BUCKET/panel.py" "$PANEL_DIR/panel.py" \
+       && gsutil cp "gs://$PANEL_BUCKET/index.html" "$PANEL_DIR/index.html"; then
+        break
+    fi
+    echo "panel code not in bucket yet, retry $attempt"
+    sleep 10
+done
 
 INI_PATH="/home/steam/Steam/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
 
@@ -195,6 +204,8 @@ Environment=INI_PATH=$INI_PATH
 Environment=SERVICE_NAME=palworld
 Environment=STEAM_USER=steam
 Environment=INDEX_PATH=$PANEL_DIR/index.html
+Environment=PANEL_BUCKET=$PANEL_BUCKET
+Environment=PANEL_DIR=$PANEL_DIR
 ExecStart=$PANEL_DIR/venv/bin/python $PANEL_DIR/panel.py serve
 Restart=always
 RestartSec=10
