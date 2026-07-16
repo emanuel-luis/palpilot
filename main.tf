@@ -140,7 +140,8 @@ resource "google_compute_disk" "palworld_data" {
 resource "google_compute_instance" "palworld" {
 
   name         = "palworld-tf-vm"
-  machine_type = "e2-standard-8"
+  machine_type = "e2-standard-4"
+  # machine_type = "e2-standard-8"
   zone         = var.zone
 
 

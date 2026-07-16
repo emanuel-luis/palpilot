@@ -47,6 +47,26 @@ resource "google_project_iam_member" "coordinator_compute" {
   member  = "serviceAccount:${google_service_account.coordinator.email}"
 }
 
+# Quem roda o terraform precisa de actAs sobre o SA do coordenador para
+# deployar a função com esse SA.
+data "google_client_openid_userinfo" "me" {}
+
+# O Cloud Build (gen2) usa o SA default do Compute como build SA. Nesse
+# projeto ele está sem permissões, então o build falha. Concede o papel.
+data "google_project" "this" {}
+
+resource "google_project_iam_member" "build_sa_builder" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.builder"
+  member  = "serviceAccount:${data.google_project.this.number}-compute@developer.gserviceaccount.com"
+}
+
+resource "google_service_account_iam_member" "deployer_actas" {
+  service_account_id = google_service_account.coordinator.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "user:${data.google_client_openid_userinfo.me.email}"
+}
+
 
 #
 # Código-fonte do coordenador -> zip -> bucket do painel
@@ -103,7 +123,11 @@ resource "google_cloudfunctions2_function" "coordinator" {
     }
   }
 
-  depends_on = [google_project_service.apis]
+  depends_on = [
+    google_project_service.apis,
+    google_service_account_iam_member.deployer_actas,
+    google_project_iam_member.build_sa_builder,
+  ]
 }
 
 
