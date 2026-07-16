@@ -142,7 +142,10 @@ resource "google_compute_instance" "palworld" {
   name         = "palworld-tf-vm"
   machine_type = "e2-standard-4"
   # machine_type = "e2-standard-8"
-  zone         = var.zone
+  zone = var.zone
+
+  # Permite trocar machine_type sem recriar (para/liga a VM, mantém discos).
+  allow_stopping_for_update = true
 
 
   tags = [

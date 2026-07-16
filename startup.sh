@@ -7,103 +7,103 @@ exec 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
 
-echo "Enabling Debian non-free repositories"
-sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+# Marker on the (ephemeral) boot disk. Heavy provisioning runs once per boot
+# disk; a machine-type change / restart keeps the boot disk and skips it.
+PROVISION_MARKER="/var/lib/palworld/provisioned"
+mkdir -p /var/lib/palworld
 
-echo "Adding i386 architecture (required by steamcmd)"
-dpkg --add-architecture i386
+# ---------------------------------------------------------------------------
+# One-time provisioning (system packages)
+# ---------------------------------------------------------------------------
+if [ -f "$PROVISION_MARKER" ]; then
+    echo "System already provisioned; skipping apt install"
+else
+    echo "Enabling Debian non-free repositories"
+    sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
 
-echo "Updating packages"
-apt-get update
+    echo "Adding i386 architecture (required by steamcmd)"
+    dpkg --add-architecture i386
 
-echo "Pre-accepting Steam license (non-interactive install)"
-echo steamcmd steam/question select "I AGREE" | debconf-set-selections
-echo steamcmd steam/license note '' | debconf-set-selections
+    echo "Updating packages"
+    apt-get update
 
-echo "Installing dependencies"
+    echo "Pre-accepting Steam license (non-interactive install)"
+    echo steamcmd steam/question select "I AGREE" | debconf-set-selections
+    echo steamcmd steam/license note '' | debconf-set-selections
 
-apt-get install -y \
-steamcmd \
-screen \
-google-cloud-cli \
-cron \
-python3 \
-python3-venv \
-python3-pip \
-curl
+    echo "Installing dependencies"
+    apt-get install -y \
+        steamcmd \
+        screen \
+        google-cloud-cli \
+        cron \
+        python3 \
+        python3-venv \
+        python3-pip \
+        curl
+
+    touch "$PROVISION_MARKER"
+fi
 
 
 echo "Creating steam user"
-
-
-id steam >/dev/null 2>&1 || \
-useradd -m -s /bin/bash steam
-
+id steam >/dev/null 2>&1 || useradd -m -s /bin/bash steam
 
 
 echo "Mounting data disk"
 DISK="/dev/disk/by-id/google-palworld-data"
 MOUNT="/home/steam/Steam"
+mkdir -p "$MOUNT"
 
-mkdir -p $MOUNT
-
-
-if ! blkid $DISK; then
-
-    mkfs.ext4 -F $DISK
-
+if ! blkid "$DISK"; then
+    mkfs.ext4 -F "$DISK"
 fi
 
-
 grep -q "$DISK" /etc/fstab || \
-echo "$DISK $MOUNT ext4 defaults,nofail 0 2" >> /etc/fstab
-
+    echo "$DISK $MOUNT ext4 defaults,nofail 0 2" >> /etc/fstab
 
 mount -a
-
-
-
 chown -R steam:steam /home/steam
 
 
-
-echo "Installing Palworld"
-
-
-# steamcmd installs to /usr/games (not on runuser PATH); use full path.
-# force_install_dir MUST come before login (steamcmd requirement).
-# First run self-updates and can fail with "Missing configuration";
-# retry until PalServer.sh exists (max 5 attempts). set -e disabled per attempt.
+# ---------------------------------------------------------------------------
+# Palworld (installed on the PERSISTENT data disk -> survives boot-disk change)
+# ---------------------------------------------------------------------------
 PALSERVER_SH="/home/steam/Steam/PalServer.sh"
 
-for attempt in 1 2 3 4 5; do
-    echo "steamcmd attempt ${attempt}"
-
-    runuser -u steam -- /usr/games/steamcmd \
-    +force_install_dir /home/steam/Steam \
-    +login anonymous \
-    +app_update 2394010 validate \
-    +quit || true
-
-    if [ -f "$PALSERVER_SH" ]; then
-        echo "PalServer installed"
-        break
-    fi
-
-    echo "PalServer.sh not found yet, retrying..."
-    sleep 5
-done
+echo "Installing/validating Palworld"
+if [ -f "$PALSERVER_SH" ]; then
+    echo "PalServer already present on data disk; skipping steamcmd download"
+else
+    # First run self-updates and can fail with "Missing configuration"; retry.
+    for attempt in 1 2 3 4 5; do
+        echo "steamcmd attempt ${attempt}"
+        runuser -u steam -- /usr/games/steamcmd \
+            +force_install_dir /home/steam/Steam \
+            +login anonymous \
+            +app_update 2394010 validate \
+            +quit || true
+        if [ -f "$PALSERVER_SH" ]; then
+            echo "PalServer installed"
+            break
+        fi
+        echo "PalServer.sh not found yet, retrying..."
+        sleep 5
+    done
+fi
 
 
 echo "Linking steamclient.so (required by PalServer)"
-
 runuser -u steam -- mkdir -p /home/steam/.steam/sdk64
 ln -sf /home/steam/Steam/linux64/steamclient.so \
-/home/steam/.steam/sdk64/steamclient.so
+    /home/steam/.steam/sdk64/steamclient.so
 chown -h steam:steam /home/steam/.steam/sdk64/steamclient.so
 
 
-echo "Fetching admin panel files + config from metadata"
+# ---------------------------------------------------------------------------
+# Panel/agent + watchdog code and config (cheap, refreshed every boot)
+# ---------------------------------------------------------------------------
+echo "Fetching admin panel files + config from metadata/bucket"
 
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 meta() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
@@ -122,11 +122,12 @@ INTERNAL_TOKEN="$(meta coordinator-token)"
 IDLE_POLL_SECONDS="$(meta idle-poll-seconds)"
 IDLE_GRACE_SECONDS="$(meta idle-grace-seconds)"
 
-# Panel/agent + watchdog code live in GCS so they can be updated without
-# terraform/recreate. Retry in case objects are still uploading on first boot.
+INI_PATH="/home/steam/Steam/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
+
+# Panel/agent + watchdog live in GCS so they can be updated without recreate.
 for attempt in 1 2 3 4 5 6; do
-    if gsutil cp "gs://$PANEL_BUCKET/panel.py"         "$PANEL_DIR/panel.py" \
-       && gsutil cp "gs://$PANEL_BUCKET/index.html"    "$PANEL_DIR/index.html" \
+    if gsutil cp "gs://$PANEL_BUCKET/panel.py"            "$PANEL_DIR/panel.py" \
+       && gsutil cp "gs://$PANEL_BUCKET/index.html"       "$PANEL_DIR/index.html" \
        && gsutil cp "gs://$PANEL_BUCKET/idle_watchdog.py" "$PANEL_DIR/idle_watchdog.py"; then
         break
     fi
@@ -134,63 +135,40 @@ for attempt in 1 2 3 4 5 6; do
     sleep 10
 done
 
-INI_PATH="/home/steam/Steam/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
-
 
 echo "Enabling REST API in PalWorldSettings.ini"
-
-# bootstrap uses stdlib only (no fastapi needed yet); forces AdminPassword + RESTAPIEnabled.
 ADMIN_PASSWORD="$ADMIN_PASSWORD" REST_PORT="$REST_API_PORT" INI_PATH="$INI_PATH" \
-python3 "$PANEL_DIR/panel.py" bootstrap
+    python3 "$PANEL_DIR/panel.py" bootstrap
 
 
-echo "Creating Palworld service"
+echo "Installing admin panel virtualenv (once)"
+if [ ! -x "$PANEL_DIR/venv/bin/python" ]; then
+    python3 -m venv "$PANEL_DIR/venv"
+    "$PANEL_DIR/venv/bin/pip" install --upgrade pip
+    "$PANEL_DIR/venv/bin/pip" install fastapi uvicorn
+fi
 
+
+# ---------------------------------------------------------------------------
+# systemd units (rewritten every boot so env/config stay fresh)
+# ---------------------------------------------------------------------------
+echo "Writing systemd units"
 
 cat >/etc/systemd/system/palworld.service <<EOF
-
 [Unit]
 Description=Palworld Server
 After=network.target
 
-
 [Service]
-
 User=steam
-
 WorkingDirectory=/home/steam/Steam
-
 ExecStart=/home/steam/Steam/PalServer.sh -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
-
 Restart=always
-
 RestartSec=10
 
-
 [Install]
-
 WantedBy=multi-user.target
-
 EOF
-
-
-
-systemctl daemon-reload
-
-systemctl enable palworld
-
-systemctl start palworld
-
-
-
-echo "Installing admin panel (FastAPI) virtualenv"
-
-python3 -m venv "$PANEL_DIR/venv"
-"$PANEL_DIR/venv/bin/pip" install --upgrade pip
-"$PANEL_DIR/venv/bin/pip" install fastapi uvicorn
-
-
-echo "Creating admin panel service"
 
 cat >/etc/systemd/system/palworld-panel.service <<EOF
 [Unit]
@@ -219,17 +197,6 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-
-systemctl daemon-reload
-
-systemctl enable palworld-panel
-
-systemctl start palworld-panel
-
-
-
-echo "Creating idle watchdog service"
-
 cat >/etc/systemd/system/palworld-watchdog.service <<EOF
 [Unit]
 Description=Palworld Idle Watchdog (auto power-off when empty)
@@ -253,73 +220,36 @@ RestartSec=15
 WantedBy=multi-user.target
 EOF
 
-
 systemctl daemon-reload
-
-systemctl enable palworld-watchdog
-
-systemctl start palworld-watchdog
+systemctl enable palworld palworld-panel palworld-watchdog
+systemctl restart palworld palworld-panel palworld-watchdog
 
 
-
+# ---------------------------------------------------------------------------
+# Backup script + cron
+# ---------------------------------------------------------------------------
 echo "Installing backup script"
 
-
 cat >/usr/local/bin/backup-palworld.sh <<'EOF'
-
 #!/bin/bash
-
 set -e
-
-
 BUCKET=$(curl -H "Metadata-Flavor: Google" \
-http://metadata.google.internal/computeMetadata/v1/project/project-id)
-
-
+    http://metadata.google.internal/computeMetadata/v1/project/project-id)
 DATE=$(date +"%Y-%m-%d_%H-%M")
-
-
 FILE="/tmp/palworld-$DATE.tar.gz"
-
-
 systemctl stop palworld
-
-
-tar \
-czf $FILE \
--C /home/steam/Steam \
-Pal/Saved
-
-
-
-gsutil cp \
-$FILE \
-gs://$BUCKET-palworld-backups/
-
-
-
+tar czf $FILE -C /home/steam/Steam Pal/Saved
+gsutil cp $FILE gs://$BUCKET-palworld-backups/
 rm $FILE
-
-
 systemctl start palworld
-
 EOF
-
 
 chmod +x /usr/local/bin/backup-palworld.sh
 
-
-
 echo "Creating cron"
-
-
 echo "0 */6 * * * root /usr/local/bin/backup-palworld.sh" \
->/etc/cron.d/palworld-backup
-
-
-
+    >/etc/cron.d/palworld-backup
 systemctl restart cron
-
 
 
 echo "Setup completed"
