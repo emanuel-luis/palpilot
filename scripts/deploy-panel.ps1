@@ -24,8 +24,9 @@ try {
     }
 
     Write-Host "Enviando código para gs://$bucket ..."
-    Upload "$root/panel/panel.py"   "panel.py"   "text/x-python"
-    Upload "$root/panel/index.html" "index.html" "text/html"
+    Upload "$root/panel/panel.py"          "panel.py"          "text/x-python"
+    Upload "$root/panel/index.html"        "index.html"        "text/html"
+    Upload "$root/panel/idle_watchdog.py"  "idle_watchdog.py"  "text/x-python"
 
     Write-Host "Disparando self-update em $url ..."
     $tfvars = Get-Content "$root/terraform.tfvars" -Raw
