@@ -117,12 +117,17 @@ PANEL_USER="$(meta panel-user)"
 PANEL_PASSWORD="$(meta panel-password)"
 ADMIN_PASSWORD="$(meta admin-password)"
 REST_API_PORT="$(meta rest-api-port)"
+COORDINATOR_URL="$(meta coordinator-url)"
+INTERNAL_TOKEN="$(meta coordinator-token)"
+IDLE_POLL_SECONDS="$(meta idle-poll-seconds)"
+IDLE_GRACE_SECONDS="$(meta idle-grace-seconds)"
 
-# Panel code lives in GCS so it can be updated without terraform/recreate.
-# Retry in case the objects are still being uploaded on first boot.
+# Panel/agent + watchdog code live in GCS so they can be updated without
+# terraform/recreate. Retry in case objects are still uploading on first boot.
 for attempt in 1 2 3 4 5 6; do
-    if gsutil cp "gs://$PANEL_BUCKET/panel.py" "$PANEL_DIR/panel.py" \
-       && gsutil cp "gs://$PANEL_BUCKET/index.html" "$PANEL_DIR/index.html"; then
+    if gsutil cp "gs://$PANEL_BUCKET/panel.py"         "$PANEL_DIR/panel.py" \
+       && gsutil cp "gs://$PANEL_BUCKET/index.html"    "$PANEL_DIR/index.html" \
+       && gsutil cp "gs://$PANEL_BUCKET/idle_watchdog.py" "$PANEL_DIR/idle_watchdog.py"; then
         break
     fi
     echo "panel code not in bucket yet, retry $attempt"
@@ -220,6 +225,40 @@ systemctl daemon-reload
 systemctl enable palworld-panel
 
 systemctl start palworld-panel
+
+
+
+echo "Creating idle watchdog service"
+
+cat >/etc/systemd/system/palworld-watchdog.service <<EOF
+[Unit]
+Description=Palworld Idle Watchdog (auto power-off when empty)
+After=network.target palworld.service
+
+[Service]
+User=root
+WorkingDirectory=$PANEL_DIR
+Environment=ADMIN_PASSWORD=$ADMIN_PASSWORD
+Environment=REST_HOST=127.0.0.1
+Environment=REST_PORT=$REST_API_PORT
+Environment=COORDINATOR_URL=$COORDINATOR_URL
+Environment=INTERNAL_TOKEN=$INTERNAL_TOKEN
+Environment=POLL_SECONDS=${IDLE_POLL_SECONDS:-60}
+Environment=IDLE_GRACE_SECONDS=${IDLE_GRACE_SECONDS:-1800}
+ExecStart=/usr/bin/python3 $PANEL_DIR/idle_watchdog.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+
+systemctl daemon-reload
+
+systemctl enable palworld-watchdog
+
+systemctl start palworld-watchdog
 
 
 

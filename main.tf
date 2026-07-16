@@ -152,6 +152,7 @@ resource "google_compute_instance" "palworld" {
   depends_on = [
     google_storage_bucket_object.panel_py,
     google_storage_bucket_object.panel_html,
+    google_storage_bucket_object.panel_watchdog,
   ]
 
 
@@ -216,6 +217,12 @@ resource "google_compute_instance" "palworld" {
     panel-password = var.panel_password
     admin-password = var.admin_password
     rest-api-port  = tostring(var.rest_api_port)
+
+    # Coordinator (serverless) + idle watchdog config
+    coordinator-url    = google_cloudfunctions2_function.coordinator.url
+    coordinator-token  = var.internal_token
+    idle-poll-seconds  = tostring(var.idle_poll_seconds)
+    idle-grace-seconds = tostring(var.idle_grace_seconds)
 
   }
 

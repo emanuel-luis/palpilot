@@ -39,3 +39,21 @@ variable "rest_api_port" {
   type        = number
   default     = 8212
 }
+
+variable "internal_token" {
+  description = "Shared secret the VM watchdog uses to call the coordinator stop endpoint."
+  type        = string
+  sensitive   = true
+}
+
+variable "idle_poll_seconds" {
+  description = "How often the watchdog checks player activity."
+  type        = number
+  default     = 60
+}
+
+variable "idle_grace_seconds" {
+  description = "How long the server may stay empty before the VM is powered off."
+  type        = number
+  default     = 1800
+}

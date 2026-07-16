@@ -1,6 +1,9 @@
 # Local .terraform directories
 **/.terraform/*
 
+# Terraform build artifacts (function source zip)
+.build/
+
 # .tfstate files
 *.tfstate
 *.tfstate.*

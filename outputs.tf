@@ -16,3 +16,9 @@ output "panel_url" {
 output "panel_bucket" {
   value = google_storage_bucket.palworld_panel.name
 }
+
+
+# URL do painel (coordenador serverless — sempre no ar, mesmo com a VM desligada)
+output "coordinator_url" {
+  value = google_cloudfunctions2_function.coordinator.url
+}
