@@ -167,7 +167,10 @@ def _users_public(data):
 def _client_ip(request):
     fwd = request.headers.get("X-Forwarded-For", "")
     if fwd:
-        return fwd.split(",")[0].strip()
+        # GCP's front end APPENDS the real client IP as the LAST entry; earlier
+        # entries are attacker-supplied. Taking [0] would let a client bypass the
+        # login throttle by rotating a fake first hop, so use the last hop.
+        return fwd.split(",")[-1].strip()
     return request.remote_addr or "unknown"
 
 
@@ -227,6 +230,9 @@ def _check_password(username, password):
         return None
     rec = _load_users().get("users", {}).get(username)
     if not rec:
+        # Spend ~the same time as a real check so a missing username can't be
+        # distinguished from a wrong password by timing (username enumeration).
+        _hash_pw(password or "", "00" * 16, PBKDF2_ITERATIONS)
         return None
     iterations = rec.get("iterations", PBKDF2_ITERATIONS_LEGACY)
     computed = _hash_pw(password or "", rec["salt"], iterations)
@@ -285,7 +291,9 @@ def _make_token(username, perms, ver):
 
 def _verify_token(token):
     """Verify signature + expiry; return the decoded payload dict, or None."""
-    if not token or token.count(".") != 2:
+    # Fail closed: with no secret the HMAC key is empty and publicly known, so
+    # anyone could forge a token. Never trust (or issue) tokens without a secret.
+    if not INTERNAL_TOKEN or not token or token.count(".") != 2:
         return None
     header_b64, payload_b64, sig_hex = token.split(".")
     expected_sig = _sign(f"{header_b64}.{payload_b64}")
@@ -453,6 +461,9 @@ def _h_login(request):
     Unauthenticated route (that's the point); handled before the auth gate in
     the entrypoint. Shares the per-IP throttle + PBKDF2 check with Basic-Auth.
     """
+    if not INTERNAL_TOKEN:
+        # No signing secret -> refuse to issue tokens rather than mint forgeable ones.
+        return _err("server auth not configured", 500)
     ip = _client_ip(request)
     if _login_throttled(ip):
         print(f"login throttled for ip={ip}")
