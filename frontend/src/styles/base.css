@@ -1,96 +1,115 @@
-/* Global design tokens + resets, loaded once from main.js. Component styles
-   are otherwise scoped inside their own SFCs — this file only holds things
-   every component needs to agree on: color tokens, typography, focus rings.
+/* PalPilot Console — global design tokens, resets, and shared utilities.
+   Loaded once from main.js. Component-specific rules live in each SFC; this
+   file holds only what every component must agree on.
 
-   Theming: dark is the default look; `prefers-color-scheme: light` flips it
-   automatically, and ThemeToggle.vue stamps data-theme="light|dark" on <html>
-   to let a user override that either direction — the explicit attribute
-   always wins over the media query. */
+   Identity: a minimalist "instrument panel". Cool graphite surfaces, hairline
+   borders, monospace for all data/IDs/metrics, and ONE restrained warm-amber
+   accent used sparingly (primary action, active nav, the online indicator).
+   The server's power state is the visual hero.
+
+   Theming: dark is the default; prefers-color-scheme:light flips it, and
+   ThemeToggle stamps data-theme on <html> to override either way (attribute
+   wins over the media query). Component var names are kept stable
+   (--panel, --panel-2, --accent, …) so SFCs restyle purely through tokens. */
 
 :root {
-  --bg: #0f1216;
-  --panel: #171c22;
-  --panel-2: #1e252d;
-  --border: #2a333d;
-  --text: #e6edf3;
-  --muted: #8b97a4;
-  --accent: #4aa3ff;
-  --accent-2: #2b6fb3;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --danger: #f85149;
-  --danger-2: #b62324;
-  --focus: #4aa3ff;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --radius: 10px;
-  --radius-sm: 7px;
+  --bg: #0d1013;
+  --panel: #14181c;
+  --panel-2: #1a2026;
+  --border: #242c33;
+  --text: #e9eef2;
+  --muted: #808d98;
+  --faint: #4c565e;
+  --accent: #e2a03f;
+  --accent-2: #b9822f;
+  --accent-soft: rgba(226, 160, 63, 0.14);
+  --ok: #56b877;
+  --warn: #e2a03f;
+  --danger: #e0564d;
+  --danger-2: #a83a33;
+  --focus: #e2a03f;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", Consolas, monospace;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f5f7f9;
+    --bg: #f2f4f6;
     --panel: #ffffff;
     --panel-2: #eef1f4;
-    --border: #d7dce1;
+    --border: #dde2e7;
     --text: #1b232c;
-    --muted: #5b6672;
-    --accent: #1a73c7;
-    --accent-2: #155a9e;
-    --ok: #1f7a34;
-    --warn: #946a06;
-    --danger: #c62828;
-    --danger-2: #a31515;
-    --focus: #1a73c7;
+    --muted: #5c6772;
+    --faint: #99a3ad;
+    --accent: #b9772a;
+    --accent-2: #9a611f;
+    --accent-soft: rgba(185, 119, 42, 0.12);
+    --ok: #2e8f52;
+    --warn: #b9772a;
+    --danger: #c33b32;
+    --danger-2: #942820;
+    --focus: #b9772a;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #0f1216;
-  --panel: #171c22;
-  --panel-2: #1e252d;
-  --border: #2a333d;
-  --text: #e6edf3;
-  --muted: #8b97a4;
-  --accent: #4aa3ff;
-  --accent-2: #2b6fb3;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --danger: #f85149;
-  --danger-2: #b62324;
-  --focus: #4aa3ff;
+  --bg: #0d1013;
+  --panel: #14181c;
+  --panel-2: #1a2026;
+  --border: #242c33;
+  --text: #e9eef2;
+  --muted: #808d98;
+  --faint: #4c565e;
+  --accent: #e2a03f;
+  --accent-2: #b9822f;
+  --accent-soft: rgba(226, 160, 63, 0.14);
+  --ok: #56b877;
+  --warn: #e2a03f;
+  --danger: #e0564d;
+  --danger-2: #a83a33;
+  --focus: #e2a03f;
 }
 
 :root[data-theme="light"] {
-  --bg: #f5f7f9;
+  --bg: #f2f4f6;
   --panel: #ffffff;
   --panel-2: #eef1f4;
-  --border: #d7dce1;
+  --border: #dde2e7;
   --text: #1b232c;
-  --muted: #5b6672;
-  --accent: #1a73c7;
-  --accent-2: #155a9e;
-  --ok: #1f7a34;
-  --warn: #946a06;
-  --danger: #c62828;
-  --danger-2: #a31515;
-  --focus: #1a73c7;
+  --muted: #5c6772;
+  --faint: #99a3ad;
+  --accent: #b9772a;
+  --accent-2: #9a611f;
+  --accent-soft: rgba(185, 119, 42, 0.12);
+  --ok: #2e8f52;
+  --warn: #b9772a;
+  --danger: #c33b32;
+  --danger-2: #942820;
+  --focus: #b9772a;
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* Nothing should ever push the page sideways; long tokens wrap or scroll
+   inside their own container instead (see .scroll-x, .clamp, .mono cells). */
 html,
 body {
   margin: 0;
   padding: 0;
+  overflow-x: hidden;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.55 var(--font-ui);
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
@@ -106,6 +125,93 @@ a {
   outline-offset: 2px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---- typography helpers ---- */
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Uppercase monospace micro-label — the console "eyebrow". */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ---- overflow discipline (fixes text spilling out of cards/cells) ---- */
+
+/* Flex/grid children default to min-width:auto, which lets long unbreakable
+   strings (GUIDs, userIds, mod filenames) blow out their container. Reset it
+   where our layout primitives live so children can actually shrink + wrap. */
+.row > *,
+.actions > *,
+.grid > * {
+  min-width: 0;
+}
+
+/* Long machine strings: wrap anywhere rather than overflow. Use on any cell
+   holding a GUID / userId / path / URL. */
+.break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Single-line truncate with ellipsis; pair with a title="" for the full value. */
+.clamp {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wide content (tables, raw editors) scrolls inside itself, never the page. */
+.scroll-x {
+  overflow-x: auto;
+}
+
+/* ---- canonical action row: keeps a set of buttons on ONE line ---- */
+/* Buttons no longer wrap into a ragged block; if they don't fit, the row
+   scrolls horizontally inside itself. Combined with compact icon buttons,
+   a full action set (activate/backup/clone/rename/restore/delete) fits. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.actions.end {
+  justify-content: flex-end;
+}
+.actions.wrap {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* ---- shared surfaces ---- */
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -118,19 +224,7 @@ a {
   border: 0;
 }
 
-.muted {
-  color: var(--muted);
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-/* Any wide content (tables, raw editors) must scroll inside itself, never
-   the page — used by DataTable.vue and any view with a wide grid/table. */
-.scroll-x {
-  overflow-x: auto;
-}
+/* ---- form controls ---- */
 
 input,
 select,
@@ -144,6 +238,7 @@ input,
 select,
 textarea {
   width: 100%;
+  max-width: 100%;
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -163,6 +258,36 @@ textarea:focus {
   border-color: var(--accent);
 }
 
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+}
+
 button {
   cursor: pointer;
+}
+
+/* ---- icon button: compact, symbol-only, always aria-labelled ---- */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  line-height: 1;
+}
+.icon-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
