@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,10 +11,30 @@
     --ok:#3fb950; --warn:#d29922; --danger:#f85149; --danger2:#b62324;
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
+  /* Light theme: auto (OS preference) + explicit override via header toggle (data-theme). Dark stays default. */
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f5f7f9; --panel:#ffffff; --panel2:#eef1f4; --border:#d7dce1;
+      --text:#1b232c; --muted:#5b6672; --accent:#1a73c7; --accent2:#155a9e;
+      --ok:#1f7a34; --warn:#946a06; --danger:#c62828; --danger2:#a31515;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0f1216; --panel:#171c22; --panel2:#1e252d; --border:#2a333d;
+    --text:#e6edf3; --muted:#8b97a4; --accent:#4aa3ff; --accent2:#2b6fb3;
+    --ok:#3fb950; --warn:#d29922; --danger:#f85149; --danger2:#b62324;
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f7f9; --panel:#ffffff; --panel2:#eef1f4; --border:#d7dce1;
+    --text:#1b232c; --muted:#5b6672; --accent:#1a73c7; --accent2:#155a9e;
+    --ok:#1f7a34; --warn:#946a06; --danger:#c62828; --danger2:#a31515;
+  }
   *{box-sizing:border-box}
   [v-cloak]{display:none}
   body{margin:0;background:var(--bg);color:var(--text);
     font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+    clip:rect(0,0,0,0);white-space:nowrap;border:0}
   header{display:flex;align-items:center;gap:12px;padding:14px 20px;
     background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;flex-wrap:wrap}
   header h1{font-size:16px;margin:0;font-weight:600}
@@ -32,9 +52,12 @@
   nav button.active{color:var(--text);border-bottom-color:var(--accent)}
   #banner{background:var(--panel2);border-bottom:1px solid var(--warn);padding:12px 20px;
     display:flex;align-items:center;gap:14px}
+  #connBanner{background:var(--panel2);border-bottom:1px solid var(--danger);padding:10px 20px;
+    display:flex;align-items:center;gap:10px;color:var(--danger)}
   main{max-width:980px;margin:0 auto;padding:20px}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:16px}
   .card h2{margin:0 0 12px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  .card h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
   label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
   input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--border);
@@ -52,13 +75,16 @@
   .btn.ok:hover{background:var(--ok)}
   .btn.danger{background:var(--danger2);border-color:var(--danger)}
   .btn.danger:hover{background:var(--danger)}
+  .btn.small{padding:5px 10px;font-size:12px}
   .btn:disabled{opacity:.5;cursor:default}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px}
   .kv .k{color:var(--muted)}
+  .table-scroll{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px;border-bottom:1px solid var(--border)}
   th{color:var(--muted);font-weight:500}
   td .mono{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .mono{font-family:var(--mono)}
   details.section{margin:0 0 10px;border:1px solid var(--border);border-radius:9px;background:var(--panel2);overflow:hidden}
   details.section>summary{list-style:none;margin:0;padding:12px 14px;color:var(--text);font-weight:600;
     display:flex;align-items:center;gap:10px;user-select:none;cursor:pointer}
@@ -67,6 +93,7 @@
   details.section[open]>summary::before{transform:rotate(90deg)}
   details.section>summary .count{margin-left:auto;color:var(--muted);font-weight:400;font-size:12px}
   details.section .grid{padding:14px}
+  .backups-row td{background:var(--panel2);border-bottom:1px solid var(--border)}
   .metric{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
   .metric .n{font-size:22px;font-weight:600}.metric .l{font-size:11px;color:var(--muted);text-transform:uppercase}
   .badge{font-size:11px;border:1px solid var(--border);border-radius:5px;padding:1px 6px;margin-right:4px;color:var(--muted)}
@@ -81,6 +108,9 @@
   .err{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
   .switch{display:flex;align-items:flex-start;gap:8px}
   .switch input{width:auto;margin-top:3px}
+  .icon-btn{background:transparent;border:1px solid var(--border);color:var(--text);width:34px;height:34px;
+    border-radius:7px;cursor:pointer;font-size:15px;line-height:1}
+  .icon-btn:hover{border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -89,14 +119,14 @@
   <!-- LOGIN -->
   <div class="login" v-if="!authed">
     <form class="box" @submit.prevent="login">
-      <h1>Palworld Coordinator</h1>
-      <p>Entre com as credenciais do painel.</p>
-      <label>Usuário</label>
-      <input v-model.trim="loginUser" autocomplete="username" autofocus>
-      <label>Senha</label>
-      <input v-model="loginPass" type="password" autocomplete="current-password">
-      <button class="btn" type="submit">Entrar</button>
-      <div class="err">{{ loginErr }}</div>
+      <h1>{{ S.appTitle }}</h1>
+      <p>{{ S.loginSubtitle }}</p>
+      <label for="loginUser">{{ S.loginUser }}</label>
+      <input id="loginUser" v-model.trim="loginUser" autocomplete="username" autofocus>
+      <label for="loginPass">{{ S.loginPass }}</label>
+      <input id="loginPass" v-model="loginPass" type="password" autocomplete="current-password">
+      <button class="btn" type="submit" :disabled="loginBusy">{{ S.loginSubmit }}</button>
+      <div class="err" role="alert">{{ loginErr }}</div>
     </form>
   </div>
 
@@ -107,22 +137,27 @@
       <span class="meta" v-if="serverVersion">{{ serverVersion }}</span>
       <span class="pill" :class="vmPillClass"><span class="dot"></span>{{ vmLabel }}</span>
       <span class="spacer"></span>
-      <button class="btn ok" v-if="can('power') && canStart" @click="startVm">▶ Ligar servidor</button>
-      <button class="btn danger" v-if="can('power') && vm.status==='RUNNING'" @click="stopVm">■ Desligar</button>
-      <button class="btn ghost" @click="refresh">↻</button>
-      <button class="btn ghost" @click="logout">Sair</button>
+      <button class="btn ok" v-if="can('power') && canStart" :disabled="busy" @click="startVm">▶ {{ S.startServer }}</button>
+      <button class="btn danger" v-if="can('power') && vm.status==='RUNNING'" :disabled="busy" @click="stopVm">■ {{ S.stopServer }}</button>
+      <button class="icon-btn" @click="refresh" :aria-label="S.refresh" :title="S.refresh">↻</button>
+      <button class="icon-btn" @click="toggleTheme" :aria-label="themeToggleLabel" :title="themeToggleLabel">{{ theme==='light'?'🌙':'☀' }}</button>
+      <button class="btn ghost" @click="logout()">{{ S.signOut }}</button>
     </header>
 
     <nav>
       <button v-for="t in visibleTabs" :key="t.id" :class="{active:tab===t.id}" @click="go(t.id)">{{ t.label }}</button>
     </nav>
 
+    <div id="connBanner" v-if="staleBanner" role="status" aria-live="polite">
+      <span>⚠ {{ S.staleData }}</span>
+    </div>
+
     <div id="banner" v-if="vm.status && vm.status!=='RUNNING'">
-      <template v-if="vmBusy">Servidor em transição ({{ vm.status }})… aguarde.</template>
+      <template v-if="vmBusy">{{ S.vmTransitioning(vm.status) }}</template>
       <template v-else>
-        <span>🔌 Servidor desligado ({{ vm.status }}).</span>
-        <button class="btn ok" v-if="can('power')" @click="startVm">▶ Ligar servidor</button>
-        <span class="muted" v-else>(sem permissão para ligar)</span>
+        <span>🔌 {{ S.vmOff(vm.status) }}</span>
+        <button class="btn ok" v-if="can('power')" :disabled="busy" @click="startVm">▶ {{ S.startServer }}</button>
+        <span class="muted" v-else>{{ S.noStartPermission }}</span>
       </template>
     </div>
 
@@ -130,60 +165,64 @@
       <!-- STATUS -->
       <section v-if="tab==='status'">
         <div class="card">
-          <h2>Métricas</h2>
+          <h2>{{ S.metrics }}</h2>
           <div class="grid" v-if="metricsCells.length"><div class="metric" v-for="c in metricsCells" :key="c.l">
             <div class="n">{{ c.v }}</div><div class="l">{{ c.l }}</div></div></div>
-          <span class="muted" v-else>{{ vm.status==='RUNNING' ? 'servidor subindo…' : 'servidor desligado' }}</span>
+          <span class="muted" v-else>{{ vm.status==='RUNNING' ? S.serverStarting : S.serverOff }}</span>
         </div>
         <div class="card" v-if="server && server.info">
-          <h2>Informações</h2>
+          <h2>{{ S.information }}</h2>
           <div class="kv"><template v-for="(v,k) in server.info" :key="k"><span class="k">{{ k }}</span><span>{{ v }}</span></template></div>
         </div>
         <div class="card">
-          <h2>Jogadores online ({{ players.length }})</h2>
-          <table><thead><tr><th>Nome</th><th>Level</th><th>Ping</th><th>UserId</th></tr></thead>
+          <h2>{{ S.onlinePlayers(players.length) }}</h2>
+          <div class="table-scroll">
+          <table><thead><tr><th scope="col">{{ S.colName }}</th><th scope="col">{{ S.colLevel }}</th><th scope="col">{{ S.colPing }}</th><th scope="col">{{ S.colUserId }}</th></tr></thead>
           <tbody>
             <tr v-for="p in players" :key="p.userId||p.name"><td>{{ p.name }}</td><td>{{ p.level }}</td>
               <td>{{ p.ping!=null?Math.round(p.ping):'' }}</td><td class="mono">{{ p.userId }}</td></tr>
-            <tr v-if="!players.length"><td colspan="4" class="muted">{{ vm.status==='RUNNING' ? 'Ninguém online' : '—' }}</td></tr>
+            <tr v-if="!players.length"><td colspan="4" class="muted">{{ vm.status==='RUNNING' ? S.noOnePlaying : '—' }}</td></tr>
           </tbody></table>
+          </div>
         </div>
       </section>
 
       <!-- CONFIG -->
       <section v-if="tab==='config'">
         <div class="card">
-          <h2>Configurações do servidor</h2>
-          <div v-if="vm.status!=='RUNNING'" class="muted">Ligue o servidor para editar as configurações.</div>
+          <h2>{{ S.serverSettings }}</h2>
+          <div v-if="vm.status!=='RUNNING'" class="muted">{{ S.startToEditSettings }}</div>
           <template v-else>
-            <input v-model="cfgSearch" placeholder="Filtrar configurações…" style="margin-bottom:12px">
+            <label for="cfgSearch" class="sr-only">{{ S.filterSettings }}</label>
+            <input id="cfgSearch" v-model="cfgSearch" :placeholder="S.filterSettings" style="margin-bottom:12px">
             <details class="section" v-for="g in cfgGroups" :key="g.title" open>
               <summary>{{ g.title }}<span class="count">{{ g.items.length }}</span></summary>
               <div class="grid">
                 <template v-for="it in g.items" :key="it.key">
-                  <label class="switch" v-if="it.type==='boolean'">
-                    <input type="checkbox" v-model="it.value">
+                  <label class="switch" v-if="it.type==='boolean'" :for="'cfg-'+it.key">
+                    <input type="checkbox" v-model="it.value" :id="'cfg-'+it.key">
                     <span>{{ human(it.key) }}<br><span class="muted" style="font-size:10px">{{ it.key }}</span></span>
                   </label>
                   <div v-else>
-                    <label>{{ human(it.key) }}<br><span class="muted" style="font-size:10px">{{ it.key }}</span></label>
-                    <select v-if="enums[it.key]" v-model="it.value">
+                    <label :for="'cfg-'+it.key">{{ human(it.key) }}<br><span class="muted" style="font-size:10px">{{ it.key }}</span></label>
+                    <select v-if="enums[it.key]" :id="'cfg-'+it.key" v-model="it.value">
                       <option v-for="o in enums[it.key]" :key="o" :value="o">{{ o }}</option></select>
-                    <input v-else-if="it.type==='number'" type="number" step="any" v-model.number="it.value">
-                    <input v-else :type="secret(it.key)?'password':'text'" v-model="it.value">
+                    <input v-else-if="it.type==='number'" :id="'cfg-'+it.key" type="number" step="any" v-model.number="it.value">
+                    <input v-else :id="'cfg-'+it.key" :type="secret(it.key)?'password':'text'" v-model="it.value">
                   </div>
                 </template>
               </div>
             </details>
             <div class="row end" style="margin-top:14px">
-              <label class="row" style="margin:0"><input type="checkbox" v-model="cfgRestart" style="width:auto"> reiniciar após salvar</label>
-              <button class="btn ghost" @click="loadConfig">Recarregar</button>
-              <button class="btn" @click="saveConfig">Salvar campos</button>
+              <label class="row" style="margin:0" for="cfgRestart"><input type="checkbox" id="cfgRestart" v-model="cfgRestart" style="width:auto"> {{ S.restartAfterSaving }}</label>
+              <button class="btn ghost" @click="loadConfig">{{ S.reload }}</button>
+              <button class="btn" :disabled="busy" @click="saveConfig">{{ S.saveFields }}</button>
             </div>
             <details style="margin-top:12px">
-              <summary class="muted" style="cursor:pointer">Editor bruto do PalWorldSettings.ini</summary>
-              <textarea v-model="cfgRaw" spellcheck="false" style="margin-top:8px"></textarea>
-              <div class="row end" style="margin-top:10px"><button class="btn" @click="saveRaw">Salvar arquivo bruto</button></div>
+              <summary class="muted" style="cursor:pointer">{{ S.rawIniEditor }}</summary>
+              <label for="cfgRaw" class="sr-only">{{ S.rawIniEditor }}</label>
+              <textarea id="cfgRaw" v-model="cfgRaw" spellcheck="false" style="margin-top:8px"></textarea>
+              <div class="row end" style="margin-top:10px"><button class="btn" :disabled="busy" @click="saveRaw">{{ S.saveRawFile }}</button></div>
               <p class="muted">{{ cfgPath }}</p>
             </details>
           </template>
@@ -192,183 +231,345 @@
 
       <!-- SAVES -->
       <section v-if="tab==='saves'">
-        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Ligue o servidor para gerenciar os saves.</span></div>
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">{{ S.startToManageSaves }}</span></div>
         <template v-else>
           <div class="card">
-            <h2>Novo slot de save</h2>
-            <p class="muted">Cria um mundo novo e vazio. Ative-o para o servidor rodar nele (o mundo atual fica guardado e intacto).</p>
-            <div class="row"><input v-model="newSlotName" placeholder="Nome do slot (ex: Temporada 2)">
-              <button class="btn" :disabled="savesBusy" @click="createSlot">Criar slot</button></div>
+            <h2>{{ S.newSaveSlot }}</h2>
+            <p class="muted">{{ S.newSaveSlotHint }}</p>
+            <label for="newSlotName" class="sr-only">{{ S.slotName }}</label>
+            <div class="row"><input id="newSlotName" v-model="newSlotName" :placeholder="S.slotNamePlaceholder">
+              <button class="btn" :disabled="busy" @click="createSlot">{{ S.createSlot }}</button></div>
           </div>
           <div class="card">
-            <h2>Saves ({{ saves.slots.length }})</h2>
-            <p class="muted">O slot ativo é o mundo que o jogo executa. Trocar faz save + backup + restart automaticamente.</p>
-            <table><thead><tr><th>Nome</th><th>GUID</th><th>Tamanho</th><th></th></tr></thead><tbody>
-              <tr v-for="s in saves.slots" :key="s.guid">
-                <td>{{ s.name }}<span class="badge" v-if="s.active" style="color:var(--ok);border-color:var(--ok);margin-left:6px">ativo</span>
-                  <span class="badge" v-if="s.empty">vazio</span></td>
-                <td class="mono">{{ s.guid }}</td>
-                <td>{{ fmtSize(s.size) }}</td>
-                <td style="text-align:right;white-space:nowrap">
-                  <button class="btn ok" v-if="!s.active" :disabled="savesBusy" @click="activateSlot(s)">Ativar</button>
-                  <button class="btn ghost" :disabled="savesBusy||s.empty" @click="backupSlot(s)">Backup</button>
-                  <button class="btn danger" :disabled="savesBusy||s.active" @click="deleteSlot(s)">Excluir</button></td></tr>
-              <tr v-if="!saves.slots.length"><td colspan="4" class="muted">Nenhum save encontrado</td></tr>
+            <h2>{{ S.saves(saves.slots.length) }}</h2>
+            <p class="muted">{{ S.savesHint }}</p>
+            <div class="table-scroll">
+            <table><thead><tr><th scope="col">{{ S.colName }}</th><th scope="col">{{ S.colGuid }}</th><th scope="col">{{ S.colSize }}</th><th scope="col"><span class="sr-only">{{ S.colActions }}</span></th></tr></thead><tbody>
+              <template v-for="s in saves.slots" :key="s.guid">
+                <tr>
+                  <td>{{ s.name }}<span class="badge" v-if="s.active" style="color:var(--ok);border-color:var(--ok);margin-left:6px">{{ S.badgeActive }}</span>
+                    <span class="badge" v-if="s.empty">{{ S.badgeEmpty }}</span></td>
+                  <td class="mono">{{ s.guid }}</td>
+                  <td>{{ fmtSize(s.size) }}</td>
+                  <td style="text-align:right;white-space:nowrap">
+                    <button class="btn ok" v-if="!s.active" :disabled="busy" @click="activateSlot(s)">{{ S.activate }}</button>
+                    <button class="btn ghost" :disabled="busy||s.empty" @click="backupSlot(s)">{{ S.backup }}</button>
+                    <button class="btn ghost" :disabled="busy" @click="toggleBackups(s)">{{ backupsState(s.guid).open ? S.hideBackups : S.showBackups }}</button>
+                    <button class="btn danger" :disabled="busy||s.active" @click="deleteSlot(s)">{{ S.delete }}</button></td></tr>
+                <tr class="backups-row" v-if="backupsState(s.guid).open">
+                  <td colspan="4">
+                    <h3>{{ S.backupsFor(s.name) }}</h3>
+                    <p class="muted" v-if="!backupsState(s.guid).loaded">{{ S.loadingBackups }}</p>
+                    <p class="muted" v-else-if="!backupsState(s.guid).list.length">{{ S.noBackups }}</p>
+                    <div class="table-scroll" v-else>
+                      <table><thead><tr><th scope="col">{{ S.colFile }}</th><th scope="col">{{ S.colLocation }}</th>
+                        <th scope="col">{{ S.colSize }}</th><th scope="col">{{ S.colCreated }}</th><th scope="col"><span class="sr-only">{{ S.colActions }}</span></th></tr></thead>
+                      <tbody>
+                        <tr v-for="b in backupsState(s.guid).list" :key="b.ref">
+                          <td class="mono">{{ b.file }}</td><td>{{ b.location }}</td><td>{{ fmtSize(b.size) }}</td>
+                          <td>{{ fmtDate(b.created) }}</td>
+                          <td style="text-align:right;white-space:nowrap">
+                            <button class="btn small" :disabled="busy" @click="restoreBackup(s,b,false)">{{ S.restore }}</button>
+                            <button class="btn small ghost" :disabled="busy" @click="restoreBackup(s,b,true)">{{ S.restoreAsNew }}</button>
+                          </td>
+                        </tr>
+                      </tbody></table>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+              <tr v-if="!saves.slots.length"><td colspan="4" class="muted">{{ S.noSavesFound }}</td></tr>
             </tbody></table>
+            </div>
           </div>
         </template>
       </section>
 
       <!-- MODS -->
       <section v-if="tab==='mods'">
-        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Ligue o servidor para gerenciar mods.</span></div>
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">{{ S.startToManageMods }}</span></div>
         <template v-else>
           <div class="card">
-            <h2>Instalar mod (.pak)</h2>
-            <p class="muted">Mods .pak vão para <span class="mono">Pal/Content/Paks/~mods</span>. Reinicie o servidor para aplicar. UE4SS/Lua no Linux é experimental.</p>
-            <label>Por URL</label>
-            <div class="row"><input v-model="modUrl" placeholder="https://…/mod.pak">
-              <input v-model="modUrlName" placeholder="nome.pak (opcional)" style="max-width:200px">
-              <button class="btn" :disabled="modsBusy" @click="installModUrl">Baixar</button></div>
-            <label style="margin-top:12px">Por upload (até ~30 MB)</label>
-            <div class="row"><input type="file" accept=".pak" @change="pickModFile">
-              <button class="btn" :disabled="modsBusy" @click="uploadMod">Enviar</button></div>
+            <h2>{{ S.installMod }}</h2>
+            <p class="muted">{{ S.installModHint }}</p>
+            <label for="modUrl">{{ S.byUrl }}</label>
+            <div class="row"><input id="modUrl" v-model="modUrl" placeholder="https://…/mod.pak">
+              <label for="modUrlName" class="sr-only">{{ S.modFileNameOptional }}</label>
+              <input id="modUrlName" v-model="modUrlName" :placeholder="S.modFileNameOptional" style="max-width:200px">
+              <button class="btn" :disabled="busy" @click="installModUrl">{{ S.download }}</button></div>
+            <label for="modUploadInput" style="margin-top:12px">{{ S.byUpload }}</label>
+            <div class="row"><input id="modUploadInput" type="file" accept=".pak" @change="pickModFile">
+              <button class="btn" :disabled="busy" @click="uploadMod">{{ S.upload }}</button></div>
           </div>
           <div class="card">
-            <h2>Mods instalados ({{ mods.mods.length }})</h2>
-            <table><thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead><tbody>
+            <h2>{{ S.installedMods(mods.mods.length) }}</h2>
+            <div class="table-scroll">
+            <table><thead><tr><th scope="col">{{ S.colFile }}</th><th scope="col">{{ S.colStatus }}</th>
+              <th scope="col">{{ S.colSource }}</th><th scope="col">{{ S.colInstalledAt }}</th>
+              <th scope="col">{{ S.colSize }}</th><th scope="col"><span class="sr-only">{{ S.colActions }}</span></th></tr></thead><tbody>
               <tr v-for="m in mods.mods" :key="m.name">
-                <td class="mono">{{ m.name }}</td><td>{{ fmtSize(m.size) }}</td>
-                <td style="text-align:right"><button class="btn danger" :disabled="modsBusy" @click="deleteMod(m)">Remover</button></td></tr>
-              <tr v-if="!mods.mods.length"><td colspan="3" class="muted">Nenhum mod</td></tr>
+                <td class="mono">{{ m.name }}</td>
+                <td><span class="badge" :style="m.enabled?'color:var(--ok);border-color:var(--ok)':''">{{ m.enabled ? S.enabled : S.disabled }}</span></td>
+                <td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">{{ m.source_url || '—' }}</td>
+                <td>{{ fmtDate(m.installed_at) || '—' }}</td>
+                <td>{{ fmtSize(m.size) }}</td>
+                <td style="text-align:right;white-space:nowrap">
+                  <button class="btn ghost" :disabled="busy" @click="toggleMod(m)">{{ m.enabled ? S.disable : S.enable }}</button>
+                  <button class="btn danger" :disabled="busy" @click="deleteMod(m)">{{ S.remove }}</button></td></tr>
+              <tr v-if="!mods.mods.length"><td colspan="6" class="muted">{{ S.noMods }}</td></tr>
             </tbody></table>
-            <div class="row end" style="margin-top:12px"><button class="btn ghost" @click="restartServer">↻ Reiniciar servidor (aplicar mods)</button></div>
+            </div>
+            <div class="row end" style="margin-top:12px"><button class="btn ghost" :disabled="busy" @click="restartServer">↻ {{ S.restartToApplyMods }}</button></div>
           </div>
         </template>
       </section>
 
       <!-- COMMANDS -->
       <section v-if="tab==='commands'">
-        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Servidor desligado.</span></div>
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">{{ S.serverOff }}</span></div>
         <template v-else>
-          <div class="card"><h2>Anúncio</h2>
-            <div class="row"><input v-model="ann" placeholder="Mensagem para todos"><button class="btn" @click="cmd('announce',{message:ann})">Anunciar</button></div></div>
-          <div class="card"><h2>Moderação</h2>
-            <label>UserId</label><input v-model="modUser" placeholder="steam_0123456789">
-            <label style="margin-top:8px">Mensagem</label><input v-model="modMsg" placeholder="Motivo">
+          <div class="card"><h2>{{ S.announcement }}</h2>
+            <label for="annInput" class="sr-only">{{ S.announcementMessage }}</label>
+            <div class="row"><input id="annInput" v-model="ann" :placeholder="S.announcementMessage"><button class="btn" :disabled="busy" @click="cmd('announce',{message:ann})">{{ S.announce }}</button></div></div>
+          <div class="card"><h2>{{ S.moderation }}</h2>
+            <label for="modUserInput">{{ S.userId }}</label><input id="modUserInput" v-model="modUser" placeholder="steam_0123456789">
+            <label for="modMsgInput" style="margin-top:8px">{{ S.messageLabel }}</label><input id="modMsgInput" v-model="modMsg" :placeholder="S.reason">
             <div class="row" style="margin-top:10px">
-              <button class="btn" @click="cmd('kick',{userid:modUser,message:modMsg})">Kick</button>
-              <button class="btn danger" @click="cmd('ban',{userid:modUser,message:modMsg})">Ban</button>
-              <button class="btn ghost" @click="cmd('unban',{userid:modUser})">Unban</button></div></div>
-          <div class="card"><h2>Mundo</h2><div class="row"><button class="btn" @click="cmd('save',{})">Salvar mundo</button></div></div>
-          <div class="card"><h2>Encerrar servidor Palworld</h2>
-            <p class="muted">Encerra o jogo (a VM segue ligada). Para desligar a máquina use “Desligar” no topo.</p>
-            <div class="row"><div><label>Espera (s)</label><input type="number" v-model.number="shWait" style="width:100px"></div>
-              <div style="flex:1"><label>Mensagem</label><input v-model="shMsg" placeholder="Reiniciando…"></div></div>
+              <button class="btn" :disabled="busy" @click="cmd('kick',{userid:modUser,message:modMsg})">{{ S.kick }}</button>
+              <button class="btn danger" :disabled="busy" @click="cmd('ban',{userid:modUser,message:modMsg})">{{ S.ban }}</button>
+              <button class="btn ghost" :disabled="busy" @click="cmd('unban',{userid:modUser})">{{ S.unban }}</button></div></div>
+          <div class="card"><h2>{{ S.world }}</h2><div class="row"><button class="btn" :disabled="busy" @click="cmd('save',{})">{{ S.saveWorld }}</button></div></div>
+          <div class="card"><h2>{{ S.shutdownPalworld }}</h2>
+            <p class="muted">{{ S.shutdownHint }}</p>
+            <div class="row"><div><label for="shWaitInput">{{ S.waitSeconds }}</label><input id="shWaitInput" type="number" v-model.number="shWait" style="width:100px"></div>
+              <div style="flex:1"><label for="shMsgInput">{{ S.messageLabel }}</label><input id="shMsgInput" v-model="shMsg" :placeholder="S.restartingPlaceholder"></div></div>
             <div class="row" style="margin-top:10px">
-              <button class="btn danger" @click="cmd('shutdown',{waittime:shWait,message:shMsg})">Shutdown</button>
-              <button class="btn danger" @click="confirmStop">Force Stop</button></div></div>
+              <button class="btn danger" :disabled="busy" @click="cmd('shutdown',{waittime:shWait,message:shMsg})">{{ S.shutdown }}</button>
+              <button class="btn danger" :disabled="busy" @click="confirmStop">{{ S.forceStop }}</button></div></div>
         </template>
       </section>
 
       <!-- WATCHDOG -->
       <section v-if="tab==='watchdog'">
         <div class="card">
-          <h2>Watchdog — desligamento automático</h2>
-          <p class="muted">Desliga a VM depois de ficar vazia pelo tempo de tolerância. Vale imediatamente (sem recriar a VM).</p>
+          <h2>{{ S.watchdogTitle }}</h2>
+          <p class="muted">{{ S.watchdogHint }}</p>
           <div class="grid">
-            <div><label>Intervalo de checagem (segundos) — 10 a 3600</label>
-              <input type="number" v-model.number="wd.poll_seconds" min="10" max="3600"></div>
-            <div><label>Tolerância de ociosidade (minutos) — 1 a 1440</label>
-              <input type="number" v-model.number="wdGraceMin" min="1" max="1440"></div>
+            <div><label for="wdPoll">{{ S.pollInterval }}</label>
+              <input id="wdPoll" type="number" v-model.number="wd.poll_seconds" min="10" max="3600"></div>
+            <div><label for="wdGrace">{{ S.idleGrace }}</label>
+              <input id="wdGrace" type="number" v-model.number="wdGraceMin" min="1" max="1440"></div>
           </div>
-          <p class="muted">Grava: checa a cada {{ wd.poll_seconds }}s, desliga após {{ wdGraceMin }} min vazio.</p>
-          <div class="row end"><button class="btn ghost" @click="loadWatchdog">Recarregar</button>
-            <button class="btn" @click="saveWatchdog">Salvar</button></div>
+          <p class="muted">{{ S.watchdogSummary(wd.poll_seconds, wdGraceMin) }}</p>
+          <div class="row end"><button class="btn ghost" @click="loadWatchdog">{{ S.reload }}</button>
+            <button class="btn" :disabled="busy" @click="saveWatchdog">{{ S.save }}</button></div>
         </div>
       </section>
 
       <!-- USERS -->
       <section v-if="tab==='users'">
         <div class="card">
-          <h2>{{ userForm.editing ? 'Editar usuário: '+userForm.username : 'Adicionar usuário' }}</h2>
+          <h2>{{ userForm.editing ? S.editUserTitle(userForm.username) : S.addUserTitle }}</h2>
           <div class="grid">
-            <div><label>Usuário</label><input v-model.trim="userForm.username" :readonly="userForm.editing"></div>
-            <div><label>Senha {{ userForm.editing ? '(vazio = manter)' : '' }}</label><input type="password" v-model="userForm.password"></div>
+            <div><label for="userUsername">{{ S.username }}</label><input id="userUsername" v-model.trim="userForm.username" :readonly="userForm.editing"></div>
+            <div><label for="userPassword">{{ userForm.editing ? S.passwordKeepHint : S.password }}</label><input id="userPassword" type="password" v-model="userForm.password"></div>
           </div>
-          <label style="margin-top:12px">Permissões</label>
-          <div class="row" style="gap:16px">
-            <label class="row" style="gap:6px;margin:0" v-for="p in allPerms" :key="p">
-              <input type="checkbox" :value="p" v-model="userForm.perms" style="width:auto"> {{ permLabels[p]||p }}</label>
+          <label style="margin-top:12px" id="userPermsLabel">{{ S.permissions }}</label>
+          <div class="row" style="gap:16px" role="group" aria-labelledby="userPermsLabel">
+            <label class="row" style="gap:6px;margin:0" v-for="p in allPerms" :key="p" :for="'perm-'+p">
+              <input type="checkbox" :id="'perm-'+p" :value="p" v-model="userForm.perms" style="width:auto"> {{ permLabels[p]||p }}</label>
           </div>
           <div class="row end" style="margin-top:14px">
-            <button class="btn ghost" @click="resetUserForm">Limpar</button>
-            <button class="btn" @click="saveUser">Salvar usuário</button></div>
+            <button class="btn ghost" @click="resetUserForm">{{ S.clear }}</button>
+            <button class="btn" :disabled="busy" @click="saveUser">{{ S.saveUser }}</button></div>
         </div>
         <div class="card">
-          <h2>Usuários</h2>
-          <table><thead><tr><th>Usuário</th><th>Permissões</th><th></th></tr></thead><tbody>
+          <h2>{{ S.users }}</h2>
+          <div class="table-scroll">
+          <table><thead><tr><th scope="col">{{ S.username }}</th><th scope="col">{{ S.permissions }}</th><th scope="col"><span class="sr-only">{{ S.colActions }}</span></th></tr></thead><tbody>
             <tr v-for="u in users" :key="u.username">
-              <td>{{ u.username }}<span class="muted" v-if="u.username===me.user"> (você)</span></td>
+              <td>{{ u.username }}<span class="muted" v-if="u.username===me.user"> {{ S.youSuffix }}</span></td>
               <td><span class="badge" v-for="p in u.perms" :key="p">{{ permLabels[p]||p }}</span></td>
               <td style="text-align:right;white-space:nowrap">
-                <button class="btn ghost" @click="editUser(u)">Editar</button>
-                <button class="btn danger" @click="delUser(u.username)" :disabled="u.username===me.user">Excluir</button></td></tr>
-            <tr v-if="!users.length"><td colspan="3" class="muted">Nenhum usuário</td></tr>
+                <button class="btn ghost" @click="editUser(u)">{{ S.edit }}</button>
+                <button class="btn danger" :disabled="busy||u.username===me.user" @click="delUser(u.username)">{{ S.delete }}</button></td></tr>
+            <tr v-if="!users.length"><td colspan="3" class="muted">{{ S.noUsers }}</td></tr>
           </tbody></table>
+          </div>
         </div>
       </section>
     </main>
   </template>
 
-  <div class="toast" :class="toast.ok?'ok':'err'" v-if="toast.show">{{ toast.msg }}</div>
+  <div class="toast" :class="toast.ok?'ok':'err'" v-if="toast.show" role="status" :aria-live="toast.ok?'polite':'assertive'">{{ toast.msg }}</div>
 </div>
 
-<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+<!-- SRI hash verified against cdnjs's published sri for vue@3.5.13/vue.global.prod.js.
+     If you bump the Vue version, refresh the hash (e.g. from https://api.cdnjs.com/libraries/vue/<version>?fields=sri). -->
+<script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"
+  integrity="sha512-joAg8oWybCIIcmhUGaqVQaEyQIHvFgRJ/YQYQech1SmfjHH0fvscMtClcq9MuKdrfLQnGdYFwebSv/QA0RIDWA=="
+  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
+// ---------------------------------------------------------------------------
+// i18n seam (M10): every user-facing string lives here, keyed by a stable id.
+// Default/only language today is English. Adding a locale later is a data
+// change (swap this object, or make it locale-keyed) — no template rewrite.
+// ---------------------------------------------------------------------------
+const STRINGS={
+  appTitle:'Palworld Coordinator',
+  loginSubtitle:'Sign in with your panel credentials.',
+  loginUser:'Username', loginPass:'Password', loginSubmit:'Sign in',
+  loginInvalid:'Invalid credentials', sessionExpired:'Session expired — please sign in again.',
+  networkError:'Network error — check your connection.',
+  startServer:'Start server', stopServer:'Stop', refresh:'Refresh', signOut:'Sign out',
+  staleData:'Cannot reach the coordinator — data may be stale.',
+  vmTransitioning:s=>'Server is transitioning ('+s+')… please wait.',
+  vmOff:s=>'Server is off ('+s+').',
+  noStartPermission:'(no permission to start)',
+  metrics:'Metrics', information:'Information',
+  onlinePlayers:n=>'Online players ('+n+')',
+  serverStarting:'server starting…', serverOff:'server is off',
+  noOnePlaying:'No one online',
+  colName:'Name', colLevel:'Level', colPing:'Ping', colUserId:'User ID',
+  colGuid:'GUID', colSize:'Size', colActions:'Actions', colFile:'File', colLocation:'Location',
+  colCreated:'Created', colStatus:'Status', colSource:'Source URL', colInstalledAt:'Installed at',
+  metricFps:'FPS', metricPlayers:'Players', metricMax:'Max', metricUptime:'Uptime (s)',
+  metricFrametime:'Frametime', metricDays:'Days',
+  serverSettings:'Server settings', startToEditSettings:'Start the server to edit settings.',
+  filterSettings:'Filter settings…', restartAfterSaving:'restart after saving',
+  reload:'Reload', saveFields:'Save fields', rawIniEditor:'Raw PalWorldSettings.ini editor',
+  saveRawFile:'Save raw file',
+  startToManageSaves:'Start the server to manage saves.',
+  newSaveSlot:'New save slot',
+  newSaveSlotHint:'Creates a new, empty world. Activate it to run the server on it (the current world stays saved and untouched).',
+  slotName:'Slot name', slotNamePlaceholder:'Slot name (e.g. Season 2)', createSlot:'Create slot',
+  saves:n=>'Saves ('+n+')',
+  savesHint:'The active slot is the world the game runs. Switching saves + backs up + restarts automatically.',
+  badgeActive:'active', badgeEmpty:'empty',
+  activate:'Activate', backup:'Backup', delete:'Delete',
+  showBackups:'Backups ▾', hideBackups:'Backups ▴',
+  backupsFor:name=>'Backups for "'+name+'"',
+  loadingBackups:'Loading backups…', noBackups:'No backups yet',
+  restore:'Restore', restoreAsNew:'Restore as new slot…',
+  promptNewSlotName:'New slot name:',
+  confirmRestore:(file,slot)=>'Restore "'+file+'" into "'+slot+'"?\n\nThe current world will be snapshotted first, then replaced with this backup, and the server restarted.',
+  confirmRestoreAsNew:(file,name)=>'Restore "'+file+'" into a new slot named "'+name+'"?\n\nThe current world will be snapshotted first (untouched); the backup is extracted into the new slot.',
+  restoreDone:target=>'Restored into: '+target,
+  noSavesFound:'No saves found',
+  startToManageMods:'Start the server to manage mods.',
+  installMod:'Install mod (.pak)',
+  installModHint:'Mod .pak files go to Pal/Content/Paks/~mods. Restart the server to apply. UE4SS/Lua on Linux is experimental.',
+  byUrl:'By URL', modFileNameOptional:'name.pak (optional)', download:'Download',
+  byUpload:'By upload (up to ~30 MB)', upload:'Upload',
+  installedMods:n=>'Installed mods ('+n+')',
+  enabled:'Enabled', disabled:'Disabled', enable:'Enable', disable:'Disable', remove:'Remove',
+  noMods:'No mods', restartToApplyMods:'Restart server (apply mods)',
+  announcement:'Announcement', announcementMessage:'Message for everyone', announce:'Announce',
+  moderation:'Moderation', userId:'User ID', messageLabel:'Message', reason:'Reason',
+  kick:'Kick', ban:'Ban', unban:'Unban',
+  world:'World', saveWorld:'Save world',
+  shutdownPalworld:'Shut down Palworld server',
+  shutdownHint:'Stops the game (the VM stays on). To turn off the machine, use "Stop" at the top.',
+  waitSeconds:'Wait (s)', restartingPlaceholder:'Restarting…',
+  shutdown:'Shutdown', forceStop:'Force Stop',
+  watchdogTitle:'Watchdog — automatic shutdown',
+  watchdogHint:'Turns off the VM after it stays empty for the grace period. Applies immediately (no VM recreate needed).',
+  pollInterval:'Check interval (seconds) — 10 to 3600', idleGrace:'Idle grace period (minutes) — 1 to 1440',
+  watchdogSummary:(poll,grace)=>'Saves: checks every '+poll+'s, shuts down after '+grace+' min empty.',
+  save:'Save',
+  editUserTitle:name=>'Edit user: '+name, addUserTitle:'Add user',
+  username:'Username', password:'Password', passwordKeepHint:'Password (blank = keep current)',
+  permissions:'Permissions', clear:'Clear', saveUser:'Save user',
+  users:'Users', youSuffix:'(you)', edit:'Edit', noUsers:'No users',
+  enterUsername:'Enter a username', userSaved:'User saved', userDeleted:'Deleted',
+  confirmDeleteUser:u=>'Delete '+u+'?',
+  permView:'View status', permPower:'Start/Stop', permConfig:'Edit config',
+  permCommands:'Commands', permUsers:'Manage users',
+  secServerNet:'Server & Network', secApiRcon:'API & RCON', secVoice:'Voice Chat', secPvp:'PvP',
+  secGuildBase:'Guild & Base', secPals:'Pals', secPlayer:'Player', secItems:'Items & Collection',
+  secWorldDiff:'World & Difficulty', secRates:'Rates', secOther:'Other',
+  tabStatus:'Status', tabConfig:'Settings', tabSaves:'Saves', tabMods:'Mods',
+  tabCommands:'Commands', tabWatchdog:'Watchdog', tabUsers:'Users',
+  confirmStopVm:'Stop the VM? Players will be disconnected.',
+  confirmForceStop:'Force an immediate stop of the game?',
+  vmStarting:'Starting… ~2-3min', vmStartFailed:'Failed to start',
+  vmStopping:'Stopping…', vmStopFailed:'Failed to stop',
+  cmdOk:ep=>'OK: '+ep,
+  cmdFailed:(status,err)=>'Failed ('+status+'): '+(err||''),
+  restUnavailable:'Game REST API unavailable',
+  nothingChanged:'Nothing changed',
+  savedFields:(n,restarting)=>'Saved ('+n+')'+(restarting?' + restarting':''),
+  saveFailed:'Failed to save', savedGeneric:'Saved', errorGeneric:'Error',
+  watchdogUpdated:'Watchdog updated',
+  savesListFailed:'Failed to list saves',
+  enterName:'Enter a name',
+  slotCreated:name=>'Slot created: '+name+' — activate it to start a new world',
+  confirmActivate:name=>'Activate "'+name+'"? The server will be saved, backed up, and restarted on this world.',
+  activating:'Saving + backing up + switching worlds… may take ~1 min',
+  worldActive:(name,restarted)=>'World active: '+name+(restarted?' (restarted)':''),
+  backupDone:ref=>'Backup: '+ref,
+  confirmDeleteSlot:name=>'Delete slot "'+name+'"? A backup will be made first.',
+  slotDeleted:'Deleted (backup saved)',
+  backupsListFailed:'Failed to list backups',
+  modsListFailed:'Failed to list mods',
+  enterModUrl:'Enter the .pak URL',
+  modInstalled:name=>'Mod installed: '+name+' — restart to apply',
+  chooseModFile:'Choose a .pak file', onlyPakFiles:'Only .pak files',
+  modUploaded:name=>'Uploaded: '+name+' — restart to apply',
+  uploadFailed:(status,err)=>'Failed ('+status+'): '+(err||''),
+  modEnabled:'Mod enabled', modDisabled:'Mod disabled',
+  confirmDeleteMod:name=>'Remove mod "'+name+'"?',
+  modRemoved:'Removed',
+  confirmRestartServer:'Restart the Palworld server to apply changes?',
+  restarting:'Restarting…', restartFailed:'Failed to restart',
+  failed:reason=>'Failed: '+reason,
+};
 const API=location.pathname.replace(/\/+$/,'');
 const ENUMS={Difficulty:['None','Casual','Normal','Hard'],DeathPenalty:['None','Item','ItemAndEquipment','All'],LogFormatType:['Text','Json']};
 const SECRET_KEYS=['AdminPassword','ServerPassword'];
 const SERVER_KEYS=new Set(['ServerName','ServerDescription','ServerPlayerMaxNum','CoopPlayerMaxNum','PublicPort','PublicIP','Region','bUseAuth','BanListURL','bAllowClientMod','bShowPlayerList','ChatPostLimitPerMinute','bIsMultiplay','ServerPassword','AdminPassword','CrossplayPlatforms','LogFormatType','bIsShowJoinLeftMessage','ServerReplicatePawnCullDistance']);
 const WORLD_KEYS=new Set(['Difficulty','RandomizerType','RandomizerSeed','bIsRandomizerPalLevelRandom','DayTimeSpeedRate','NightTimeSpeedRate','DeathPenalty','bHardcore','bPalLost','bCharacterRecreateInHardcore','autoSaveSpan','bIsUseBackupSaveData','SupplyDropSpan','EnablePredatorBossPal','bEnableInvaderEnemy','bActiveUNKO']);
 const SECTIONS=[
-  ['Servidor & Rede',k=>SERVER_KEYS.has(k)],
-  ['API & RCON',k=>/^REST|^RCON/.test(k)],
-  ['Voice Chat',k=>/VoiceChat/i.test(k)],
-  ['PvP',k=>/pvp/i.test(k)||k==='bEnablePlayerToPlayerDamage'||k==='bEnableFriendlyFire'],
-  ['Guild & Base',k=>/Guild|BaseCamp|Build|AutoTransferMaster/.test(k)],
-  ['Pals',k=>/^Pal/.test(k)],
-  ['Jogador',k=>/Player|Respawn|Enhance|FastTravel|AimAssist|StartLocation|ExistPlayerAfterLogout|NonLoginPenalty/.test(k)],
-  ['Itens & Coleta',k=>/Item|Drop|Collection|Palbox|Technology/.test(k)],
-  ['Mundo & Dificuldade',k=>WORLD_KEYS.has(k)],
-  ['Taxas',k=>/Rate|Multiplier|Speed/.test(k)],
-  ['Outros',k=>true],
+  [STRINGS.secServerNet,k=>SERVER_KEYS.has(k)],
+  [STRINGS.secApiRcon,k=>/^REST|^RCON/.test(k)],
+  [STRINGS.secVoice,k=>/VoiceChat/i.test(k)],
+  [STRINGS.secPvp,k=>/pvp/i.test(k)||k==='bEnablePlayerToPlayerDamage'||k==='bEnableFriendlyFire'],
+  [STRINGS.secGuildBase,k=>/Guild|BaseCamp|Build|AutoTransferMaster/.test(k)],
+  [STRINGS.secPals,k=>/^Pal/.test(k)],
+  [STRINGS.secPlayer,k=>/Player|Respawn|Enhance|FastTravel|AimAssist|StartLocation|ExistPlayerAfterLogout|NonLoginPenalty/.test(k)],
+  [STRINGS.secItems,k=>/Item|Drop|Collection|Palbox|Technology/.test(k)],
+  [STRINGS.secWorldDiff,k=>WORLD_KEYS.has(k)],
+  [STRINGS.secRates,k=>/Rate|Multiplier|Speed/.test(k)],
+  [STRINGS.secOther,k=>true],
 ];
 const TABS=[
-  {id:'status',label:'Status',perm:'view'},
-  {id:'config',label:'Configurações',perm:'config'},
-  {id:'saves',label:'Saves',perm:'config'},
-  {id:'mods',label:'Mods',perm:'config'},
-  {id:'commands',label:'Comandos',perm:'commands'},
-  {id:'watchdog',label:'Watchdog',perm:'config'},
-  {id:'users',label:'Usuários',perm:'users'},
+  {id:'status',label:STRINGS.tabStatus,perm:'view'},
+  {id:'config',label:STRINGS.tabConfig,perm:'config'},
+  {id:'saves',label:STRINGS.tabSaves,perm:'config'},
+  {id:'mods',label:STRINGS.tabMods,perm:'config'},
+  {id:'commands',label:STRINGS.tabCommands,perm:'commands'},
+  {id:'watchdog',label:STRINGS.tabWatchdog,perm:'config'},
+  {id:'users',label:STRINGS.tabUsers,perm:'users'},
 ];
-const PERM_LABELS={view:'Ver status',power:'Ligar/Desligar',config:'Editar config',commands:'Comandos',users:'Gerenciar usuários'};
+const PERM_LABELS={view:STRINGS.permView,power:STRINGS.permPower,config:STRINGS.permConfig,commands:STRINGS.permCommands,users:STRINGS.permUsers};
 
 Vue.createApp({
   data(){return{
+    S:STRINGS,
     auth:localStorage.getItem('pw_auth')||'', authed:false, me:{user:'',perms:[]},
-    loginUser:'', loginPass:'', loginErr:'',
+    loginUser:'', loginPass:'', loginErr:'', loginBusy:false,
     tab:'status', vm:{status:'',ip:''}, server:null,
     cfgModel:[], cfgOrig:{}, cfgRaw:'', cfgPath:'', cfgSearch:'', cfgRestart:false,
     ann:'', modUser:'', modMsg:'', shWait:30, shMsg:'',
     wd:{poll_seconds:60,grace_seconds:1800},
-    saves:{active:'',slots:[]}, newSlotName:'', savesBusy:false,
-    mods:{dir:'',mods:[]}, modUrl:'', modUrlName:'', modFile:null, modsBusy:false,
+    saves:{active:'',slots:[]}, newSlotName:'', backups:{},
+    mods:{dir:'',mods:[]}, modUrl:'', modUrlName:'', modFile:null,
     users:[], allPerms:['view','power','config','commands','users'],
     userForm:{username:'',password:'',perms:['view'],editing:false},
     permLabels:PERM_LABELS, enums:ENUMS,
-    toast:{show:false,ok:true,msg:''}, _timer:null,
+    toast:{show:false,ok:true,msg:''}, _timer:null, _t:null,
+    pending:0, pollFails:0, staleBanner:false,
+    theme:localStorage.getItem('pw_theme')||'',
   }},
   computed:{
     visibleTabs(){return TABS.filter(t=>this.me.perms.includes(t.perm));},
@@ -379,10 +580,12 @@ Vue.createApp({
     serverName(){return this.server&&this.server.info&&this.server.info.servername||'Palworld';},
     serverVersion(){return this.server&&this.server.info&&this.server.info.version||'';},
     players(){return this.server&&this.server.players||[];},
+    busy(){return this.pending>0;},
+    themeToggleLabel(){return this.theme==='light'?'Switch to dark theme':'Switch to light theme';},
     metricsCells(){
       const m=this.server&&this.server.metrics; if(!m)return[];
-      const cells=[['FPS','serverfps'],['Jogadores','currentplayernum'],['Máx','maxplayernum'],
-        ['Uptime (s)','uptime'],['Frametime','serverframetime'],['Dias','days']];
+      const cells=[[STRINGS.metricFps,'serverfps'],[STRINGS.metricPlayers,'currentplayernum'],[STRINGS.metricMax,'maxplayernum'],
+        [STRINGS.metricUptime,'uptime'],[STRINGS.metricFrametime,'serverframetime'],[STRINGS.metricDays,'days']];
       return cells.filter(([l,k])=>m[k]!=null).map(([l,k])=>({l,v:m[k]}));
     },
     wdGraceMin:{get(){return Math.round(this.wd.grace_seconds/60);},set(v){this.wd.grace_seconds=Math.round(v*60);}},
@@ -404,22 +607,38 @@ Vue.createApp({
     human(k){return k.replace(/^b(?=[A-Z])/,'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/_/g,' ').trim();},
     secret(k){return SECRET_KEYS.includes(k);},
     notify(msg,ok=true){this.toast={show:true,ok,msg};clearTimeout(this._t);this._t=setTimeout(()=>this.toast.show=false,2800);},
-    async api(method,path,body){
-      const opt={method,headers:{}};
-      if(this.auth)opt.headers['Authorization']='Basic '+this.auth;
-      if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
-      const r=await fetch(API+path,opt);
-      let data;try{data=await r.json();}catch{data={};}
-      if(r.status===401)this.logout();
-      return{ok:r.ok,status:r.status,data};
+    // Shared request helper: single error-envelope handling point ({ok,error,...data}),
+    // and the single "pending" counter that drives every mutating button's disabled state.
+    // Background polling passes {trackBusy:false} so it never blocks the UI.
+    async api(method,path,body,opts){
+      opts=opts||{};
+      const track=opts.trackBusy!==false;
+      if(track)this.pending++;
+      try{
+        const o={method,headers:{}};
+        if(this.auth)o.headers['Authorization']='Basic '+this.auth;
+        if(body!==undefined){o.headers['Content-Type']='application/json';o.body=JSON.stringify(body);}
+        const r=await fetch(API+path,o);
+        let data;try{data=await r.json();}catch{data={};}
+        if(r.status===401)this.logout(STRINGS.sessionExpired);
+        return{ok:r.ok,status:r.status,data};
+      }catch(e){
+        return{ok:false,status:0,data:{error:STRINGS.networkError}};
+      }finally{
+        if(track)this.pending--;
+      }
     },
     async login(){
-      const token=btoa(this.loginUser+':'+this.loginPass);
-      const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+token}});
-      if(r.ok){this.auth=token;localStorage.setItem('pw_auth',token);this.loginErr='';this.onAuth(await r.json());}
-      else this.loginErr='Credenciais inválidas';
+      this.loginBusy=true;
+      try{
+        const token=btoa(this.loginUser+':'+this.loginPass);
+        const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+token}});
+        if(r.ok){this.auth=token;localStorage.setItem('pw_auth',token);this.loginErr='';this.onAuth(await r.json());}
+        else this.loginErr=STRINGS.loginInvalid;
+      }catch(e){this.loginErr=STRINGS.networkError;}
+      finally{this.loginBusy=false;}
     },
-    logout(){this.auth='';localStorage.removeItem('pw_auth');this.authed=false;clearInterval(this._timer);this._timer=null;},
+    logout(reason){this.auth='';localStorage.removeItem('pw_auth');this.authed=false;clearInterval(this._timer);this._timer=null;this.loginErr=reason||'';},
     onAuth(d){
       this.me=d; this.authed=true;
       if(!this.visibleTabs.find(t=>t.id===this.tab))this.tab=(this.visibleTabs[0]||{id:'status'}).id;
@@ -428,17 +647,35 @@ Vue.createApp({
     },
     go(id){this.tab=id;if(id==='config')this.loadConfig();if(id==='users')this.loadUsers();if(id==='watchdog')this.loadWatchdog();if(id==='saves')this.loadSaves();if(id==='mods')this.loadMods();},
     fmtSize(b){if(b==null)return'';const u=['B','KB','MB','GB'];let i=0,n=b;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];},
+    fmtDate(v){
+      if(v==null||v==='')return'';
+      let d;
+      if(typeof v==='number')d=new Date(v>1e12?v:v*1000);
+      else d=new Date(v);
+      return isNaN(d.getTime())?String(v):d.toLocaleString();
+    },
+    toggleTheme(){
+      this.theme=this.theme==='light'?'dark':'light';
+      document.documentElement.setAttribute('data-theme',this.theme);
+      localStorage.setItem('pw_theme',this.theme);
+    },
     refresh(){this.pollOverview();if(this.tab==='config')this.loadConfig();},
     async pollOverview(){
-      const r=await this.api('GET','/api/overview');
-      if(r.ok){this.vm=r.data.vm||this.vm;this.server=r.data.server;}
+      const r=await this.api('GET','/api/overview',undefined,{trackBusy:false});
+      if(r.ok){
+        this.vm=r.data.vm||this.vm;this.server=r.data.server;
+        this.pollFails=0;this.staleBanner=false;
+      }else if(r.status!==401){
+        this.pollFails++;
+        if(this.pollFails>=2)this.staleBanner=true;
+      }
     },
-    async startVm(){const r=await this.api('POST','/api/vm/start',{});this.notify(r.ok?'Ligando… ~2-3min':'Falha ao ligar',r.ok);setTimeout(this.pollOverview,3000);},
-    async stopVm(){if(!confirm('Desligar a VM? Jogadores caem.'))return;const r=await this.api('POST','/api/vm/stop',{});this.notify(r.ok?'Desligando…':'Falha',r.ok);setTimeout(this.pollOverview,3000);},
-    confirmStop(){if(confirm('Forçar parada imediata do jogo?'))this.cmd('stop',{});},
+    async startVm(){const r=await this.api('POST','/api/vm/start',{});this.notify(r.ok?STRINGS.vmStarting:STRINGS.vmStartFailed,r.ok);setTimeout(this.pollOverview,3000);},
+    async stopVm(){if(!confirm(STRINGS.confirmStopVm))return;const r=await this.api('POST','/api/vm/stop',{});this.notify(r.ok?STRINGS.vmStopping:STRINGS.vmStopFailed,r.ok);setTimeout(this.pollOverview,3000);},
+    confirmStop(){if(confirm(STRINGS.confirmForceStop))this.cmd('stop',{});},
     async cmd(ep,body){
       const r=await this.api('POST','/api/rest/'+ep,body);
-      this.notify(r.ok?('OK: '+ep):('Falha ('+r.status+'): '+(r.data.error||'')),r.ok);
+      this.notify(r.ok?STRINGS.cmdOk(ep):STRINGS.cmdFailed(r.status,r.data.error),r.ok);
       if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(this.pollOverview,1200);
     },
     async loadConfig(){
@@ -446,7 +683,7 @@ Vue.createApp({
       const [set,cfg]=await Promise.all([this.api('GET','/api/rest/settings'),this.api('GET','/api/config')]);
       const eff=set.ok?set.data:{}; const ini=cfg.ok?(cfg.data.options||{}):{};
       this.cfgRaw=cfg.ok?(cfg.data.raw||''):''; this.cfgPath=cfg.ok?(cfg.data.path||''):'';
-      if(!set.ok){this.cfgModel=[];this.notify('Servidor REST indisponível',false);return;}
+      if(!set.ok){this.cfgModel=[];this.notify(STRINGS.restUnavailable,false);return;}
       const model=[];
       for(const [k,v] of Object.entries(eff)){if(Array.isArray(v))continue;model.push({key:k,value:v,type:typeof v});}
       SECRET_KEYS.forEach(k=>{if(!model.find(m=>m.key===k))model.push({key:k,value:ini[k]??'',type:'string'});});
@@ -457,95 +694,134 @@ Vue.createApp({
       const changed={};
       this.cfgModel.forEach(m=>{if(m.value!==this.cfgOrig[m.key])changed[m.key]=m.value;});
       const n=Object.keys(changed).length;
-      if(!n){this.notify('Nada mudou');return;}
+      if(!n){this.notify(STRINGS.nothingChanged);return;}
       const r=await this.api('POST','/api/config?restart='+this.cfgRestart,{options:changed});
-      if(r.ok){this.notify('Salvo ('+n+')'+(this.cfgRestart?' + reiniciando':''));this.loadConfig();}else this.notify('Erro ao salvar',false);
+      if(r.ok){this.notify(STRINGS.savedFields(n,this.cfgRestart));this.loadConfig();}else this.notify(r.data.error||STRINGS.saveFailed,false);
     },
-    async saveRaw(){const r=await this.api('POST','/api/config?restart='+this.cfgRestart,{raw:this.cfgRaw});this.notify(r.ok?'Salvo':'Erro',r.ok);},
+    async saveRaw(){const r=await this.api('POST','/api/config?restart='+this.cfgRestart,{raw:this.cfgRaw});this.notify(r.ok?STRINGS.savedGeneric:(r.data.error||STRINGS.errorGeneric),r.ok);},
     async loadWatchdog(){const r=await this.api('GET','/api/watchdog');if(r.ok)this.wd={poll_seconds:r.data.poll_seconds,grace_seconds:r.data.grace_seconds};},
     async saveWatchdog(){
       const r=await this.api('POST','/api/watchdog',{poll_seconds:this.wd.poll_seconds,grace_seconds:this.wd.grace_seconds});
-      this.notify(r.ok?'Watchdog atualizado':('Falha: '+(r.data.error||r.status)),r.ok);
+      this.notify(r.ok?STRINGS.watchdogUpdated:STRINGS.failed(r.data.error||r.status),r.ok);
     },
     // ---- save slots ----
     async loadSaves(){
       if(this.vm.status!=='RUNNING'){this.saves={active:'',slots:[]};return;}
       const r=await this.api('GET','/api/saves');
-      if(r.ok)this.saves=r.data;else this.notify('Falha ao listar saves',false);
+      if(r.ok){
+        this.saves=r.data;
+        (r.data.slots||[]).forEach(s=>{if(!this.backups[s.guid])this.backups[s.guid]={open:false,loaded:false,list:[]};});
+      }else this.notify(r.data.error||STRINGS.savesListFailed,false);
     },
     async createSlot(){
       const name=this.newSlotName.trim();
-      if(!name){this.notify('Informe um nome',false);return;}
-      this.savesBusy=true;
+      if(!name){this.notify(STRINGS.enterName,false);return;}
       const r=await this.api('POST','/api/saves',{name});
-      this.savesBusy=false;
-      if(r.ok){this.notify('Slot criado: '+r.data.name+' — ative para começar um mundo novo');this.newSlotName='';this.loadSaves();}
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.slotCreated(r.data.name));this.newSlotName='';this.loadSaves();}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async activateSlot(s){
-      if(!confirm('Ativar "'+s.name+'"? O servidor será salvo, backupeado e reiniciado neste mundo.'))return;
-      this.savesBusy=true;
-      this.notify('Salvando + backup + trocando mundo… pode levar ~1min');
+      if(!confirm(STRINGS.confirmActivate(s.name)))return;
+      this.notify(STRINGS.activating);
       const r=await this.api('POST','/api/saves/'+encodeURIComponent(s.guid)+'/activate?restart=true',{});
-      this.savesBusy=false;
-      if(r.ok){this.notify('Mundo ativo: '+s.name+(r.data.restarted?' (reiniciado)':''));setTimeout(this.loadSaves,2000);}
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.worldActive(s.name,r.data.restarted));setTimeout(this.loadSaves,2000);}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async backupSlot(s){
-      this.savesBusy=true;
       const r=await this.api('POST','/api/saves/'+encodeURIComponent(s.guid)+'/backup',{});
-      this.savesBusy=false;
-      if(r.ok)this.notify('Backup: '+(r.data.remote||r.data.local||r.data.file));
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok)this.notify(STRINGS.backupDone(r.data.remote||r.data.local||r.data.file));
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async deleteSlot(s){
-      if(!confirm('Excluir slot "'+s.name+'"? Um backup será feito antes.'))return;
-      this.savesBusy=true;
+      if(!confirm(STRINGS.confirmDeleteSlot(s.name)))return;
       const r=await this.api('DELETE','/api/saves/'+encodeURIComponent(s.guid));
-      this.savesBusy=false;
-      if(r.ok){this.notify('Excluído (backup salvo)');this.loadSaves();}
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.slotDeleted);this.loadSaves();}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
+    },
+    // ---- backups / restore ----
+    // Pure read for template use — never mutates state during render.
+    // Entries are seeded in loadSaves()/ensured in toggleBackups() instead.
+    backupsState(guid){
+      return this.backups[guid]||{open:false,loaded:false,list:[]};
+    },
+    _ensureBackupsEntry(guid){
+      if(!this.backups[guid])this.backups[guid]={open:false,loaded:false,list:[]};
+      return this.backups[guid];
+    },
+    async toggleBackups(s){
+      const st=this._ensureBackupsEntry(s.guid);
+      st.open=!st.open;
+      if(st.open&&!st.loaded)await this.loadBackups(s);
+    },
+    async loadBackups(s){
+      const st=this._ensureBackupsEntry(s.guid);
+      const r=await this.api('GET','/api/saves/'+encodeURIComponent(s.guid)+'/backups');
+      if(r.ok){st.list=r.data.backups||[];st.loaded=true;}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
+    },
+    async restoreBackup(s,b,asNew){
+      let name='';
+      if(asNew){
+        name=(prompt(STRINGS.promptNewSlotName,s.name+' (restored)')||'').trim();
+        if(!name)return;
+      }
+      const msg=asNew?STRINGS.confirmRestoreAsNew(b.file,name):STRINGS.confirmRestore(b.file,s.name);
+      if(!confirm(msg))return;
+      const body={ref:b.ref};
+      if(asNew){body.as_new_slot=true;body.name=name;}
+      const r=await this.api('POST','/api/saves/'+encodeURIComponent(s.guid)+'/restore',body);
+      if(r.ok){
+        this.notify(STRINGS.restoreDone(asNew?name:s.name));
+        this._ensureBackupsEntry(s.guid).open=false;
+        this.loadSaves();
+      }else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     // ---- mods ----
     async loadMods(){
       if(this.vm.status!=='RUNNING'){this.mods={dir:'',mods:[]};return;}
       const r=await this.api('GET','/api/mods');
-      if(r.ok)this.mods=r.data;else this.notify('Falha ao listar mods',false);
+      if(r.ok)this.mods=r.data;else this.notify(r.data.error||STRINGS.modsListFailed,false);
     },
     async installModUrl(){
       const url=this.modUrl.trim();
-      if(!url){this.notify('Informe a URL do .pak',false);return;}
-      this.modsBusy=true;
+      if(!url){this.notify(STRINGS.enterModUrl,false);return;}
       const r=await this.api('POST','/api/mods/url?restart=false',{url,name:this.modUrlName.trim()});
-      this.modsBusy=false;
-      if(r.ok){this.notify('Mod instalado: '+r.data.name+' — reinicie para aplicar');this.modUrl='';this.modUrlName='';this.loadMods();}
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.modInstalled(r.data.name));this.modUrl='';this.modUrlName='';this.loadMods();}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     pickModFile(e){this.modFile=e.target.files[0]||null;},
     async uploadMod(){
       const f=this.modFile;
-      if(!f){this.notify('Escolha um arquivo .pak',false);return;}
-      if(!f.name.toLowerCase().endsWith('.pak')){this.notify('Só arquivos .pak',false);return;}
-      this.modsBusy=true;
-      const r=await fetch(API+'/api/mods/upload?name='+encodeURIComponent(f.name)+'&restart=false',
-        {method:'POST',headers:{Authorization:'Basic '+this.auth,'Content-Type':'application/octet-stream'},body:f});
-      let data;try{data=await r.json();}catch{data={};}
-      this.modsBusy=false;
-      if(r.ok){this.notify('Enviado: '+data.name+' — reinicie para aplicar');this.modFile=null;this.loadMods();}
-      else this.notify('Falha ('+r.status+'): '+(data.error||''),false);
+      if(!f){this.notify(STRINGS.chooseModFile,false);return;}
+      if(!f.name.toLowerCase().endsWith('.pak')){this.notify(STRINGS.onlyPakFiles,false);return;}
+      this.pending++;
+      let data,ok,status;
+      try{
+        const r=await fetch(API+'/api/mods/upload?name='+encodeURIComponent(f.name)+'&restart=false',
+          {method:'POST',headers:{Authorization:'Basic '+this.auth,'Content-Type':'application/octet-stream'},body:f});
+        try{data=await r.json();}catch{data={};}
+        ok=r.ok;status=r.status;
+      }catch(e){ok=false;status=0;data={error:STRINGS.networkError};}
+      finally{this.pending--;}
+      if(ok){this.notify(STRINGS.modUploaded(data.name));this.modFile=null;this.loadMods();}
+      else this.notify(STRINGS.uploadFailed(status,data.error),false);
+    },
+    async toggleMod(m){
+      const ep=m.enabled?'disable':'enable';
+      const r=await this.api('POST','/api/mods/'+encodeURIComponent(m.name)+'/'+ep,{});
+      if(r.ok){this.notify(m.enabled?STRINGS.modDisabled:STRINGS.modEnabled);this.loadMods();}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async deleteMod(m){
-      if(!confirm('Remover mod "'+m.name+'"?'))return;
-      this.modsBusy=true;
+      if(!confirm(STRINGS.confirmDeleteMod(m.name)))return;
       const r=await this.api('DELETE','/api/mods/'+encodeURIComponent(m.name));
-      this.modsBusy=false;
-      if(r.ok){this.notify('Removido');this.loadMods();}
-      else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.modRemoved);this.loadMods();}
+      else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async restartServer(){
-      if(!confirm('Reiniciar o servidor Palworld para aplicar mudanças?'))return;
+      if(!confirm(STRINGS.confirmRestartServer))return;
       const r=await this.api('POST','/api/restart',{});
-      this.notify(r.ok?'Reiniciando…':'Falha ao reiniciar',r.ok);
+      this.notify(r.ok?STRINGS.restarting:STRINGS.restartFailed,r.ok);
     },
     async loadUsers(){
       const r=await this.api('GET','/api/users');
@@ -554,22 +830,25 @@ Vue.createApp({
     resetUserForm(){this.userForm={username:'',password:'',perms:['view'],editing:false};},
     editUser(u){this.userForm={username:u.username,password:'',perms:[...u.perms],editing:true};},
     async saveUser(){
-      if(!this.userForm.username){this.notify('Informe o usuário',false);return;}
+      if(!this.userForm.username){this.notify(STRINGS.enterUsername,false);return;}
       const body={username:this.userForm.username,perms:this.userForm.perms};
       if(this.userForm.password)body.password=this.userForm.password;
       const r=await this.api('POST','/api/users',body);
-      if(r.ok){this.notify('Usuário salvo');this.resetUserForm();this.loadUsers();}else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.userSaved);this.resetUserForm();this.loadUsers();}else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
     async delUser(username){
-      if(!confirm('Excluir '+username+'?'))return;
+      if(!confirm(STRINGS.confirmDeleteUser(username)))return;
       const r=await this.api('DELETE','/api/users/'+encodeURIComponent(username));
-      if(r.ok){this.notify('Excluído');this.loadUsers();}else this.notify('Falha: '+(r.data.error||r.status),false);
+      if(r.ok){this.notify(STRINGS.userDeleted);this.loadUsers();}else this.notify(STRINGS.failed(r.data.error||r.status),false);
     },
   },
   async mounted(){
+    if(this.theme)document.documentElement.setAttribute('data-theme',this.theme);
     if(this.auth){
-      const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+this.auth}});
-      if(r.ok){this.onAuth(await r.json());return;}
+      try{
+        const r=await fetch(API+'/api/session',{headers:{Authorization:'Basic '+this.auth}});
+        if(r.ok){this.onAuth(await r.json());return;}
+      }catch(e){/* fall through to login screen */}
     }
     this.authed=false;
   },
