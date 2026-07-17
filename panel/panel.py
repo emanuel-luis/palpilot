@@ -1238,9 +1238,21 @@ def build_app():
 
     @app.post("/api/self-update")
     def self_update(_: str = Depends(require("commands"))):
-        # Pull the latest panel code from GCS and restart this service.
+        # Pull the latest panel code from GCS, health-check it, and restart.
+        # A syntactically-broken panel.py would otherwise brick this service in
+        # a systemd restart loop, so we snapshot the current code first and roll
+        # back if the freshly-fetched code fails to compile.
         if not PANEL_BUCKET:
             raise HTTPException(400, "PANEL_BUCKET not configured")
+
+        code_files = ["panel.py", "index.html", "idle_watchdog.py"]
+        backup_dir = os.path.join(PANEL_DIR, ".prev")
+        os.makedirs(backup_dir, exist_ok=True)
+        for fn in code_files:
+            src = os.path.join(PANEL_DIR, fn)
+            if os.path.exists(src):
+                shutil.copy2(src, os.path.join(backup_dir, fn))
+
         try:
             subprocess.run(
                 ["gsutil", "-m", "rsync", f"gs://{PANEL_BUCKET}", PANEL_DIR],
@@ -1250,6 +1262,25 @@ def build_app():
             )
         except subprocess.CalledProcessError as e:
             raise HTTPException(500, f"rsync failed: {(e.stderr or b'').decode()}")
+
+        # Health-check: the new Python must at least compile. If not, roll back
+        # the code files and refuse to restart (the running process is unharmed).
+        py = os.path.join(PANEL_DIR, "venv", "bin", "python")
+        if not os.path.exists(py):
+            py = sys.executable or "python3"
+        py_files = [os.path.join(PANEL_DIR, f) for f in ("panel.py", "idle_watchdog.py")]
+        check = subprocess.run([py, "-m", "py_compile", *py_files], capture_output=True)
+        if check.returncode != 0:
+            for fn in code_files:
+                bak = os.path.join(backup_dir, fn)
+                if os.path.exists(bak):
+                    shutil.copy2(bak, os.path.join(PANEL_DIR, fn))
+            raise HTTPException(
+                500,
+                "fetched panel code failed the compile health-check; rolled back, "
+                f"not restarting: {(check.stderr or b'').decode()[:500]}",
+            )
+
         # Restart after replying so the client gets a response first.
         sudo = "sudo -n " if os.geteuid() != 0 else ""
         subprocess.Popen(
