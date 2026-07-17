@@ -746,7 +746,16 @@ def coordinator(request):
 
     if path == "/" and method == "GET":
         with open(INDEX_PATH, encoding="utf-8") as f:
-            return (f.read(), 200, {"Content-Type": "text/html; charset=utf-8"})
+            # no-store so a browser never serves a stale SPA after a deploy
+            # (a cached old bundle gated on pre-v3 perms would hide sections).
+            return (
+                f.read(),
+                200,
+                {
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-store, must-revalidate",
+                },
+            )
 
     # --- unauthenticated login endpoint: issues the session token ---
     if path == "/api/login" and method == "POST":

@@ -203,6 +203,18 @@ a {
   overflow: visible;
 }
 
+/* Uniform-size action row: every button in the row shares the same width
+   (equal flex share of the row) and, since they also share one `size` prop,
+   the same height too. Use whenever a row holds several short-labelled TEXT
+   buttons (Activate/Backup/Clone/Rename/…) so they line up like a real
+   toolbar instead of a ragged row of differently-sized pills. Icon-only
+   buttons are already uniform 30px squares via .icon-btn/.icon-only and
+   don't need this. */
+.actions.equal > .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* ---- shared surfaces ---- */
 
 .row {

@@ -251,17 +251,18 @@ async function deleteRole(r) {
           <Badge v-for="p in (row.effective_perms || row.perms || [])" :key="p">{{ permLabel(p) }}</Badge>
         </template>
         <template #cell-actions="{ row }">
-          <div class="actions end">
-            <Btn size="sm" variant="ghost" icon="✎" :aria-label="`${t('common.edit')}: ${row.username}`" @click="editUser(row)" />
+          <div class="actions end equal">
+            <Btn size="sm" variant="ghost" :aria-label="`${t('common.edit')}: ${row.username}`" @click="editUser(row)">{{
+              t("common.edit")
+            }}</Btn>
             <Btn
               size="sm"
               variant="danger"
-              icon="✕"
               :aria-label="`${t('common.delete')}: ${row.username}`"
               busy-key="users"
               :disabled="row.username === session.user"
               @click="deleteUser(row.username)"
-            />
+            >{{ t("common.delete") }}</Btn>
           </div>
         </template>
       </DataTable>
@@ -287,17 +288,18 @@ async function deleteRole(r) {
               </td>
               <td><Badge v-for="p in r.perms" :key="p">{{ permLabel(p) }}</Badge></td>
               <td>
-                <div class="actions end">
-                  <Btn size="sm" variant="ghost" icon="✎" :aria-label="`${t('common.edit')}: ${r.name}`" @click="editRole(r)" />
+                <div class="actions end equal">
+                  <Btn size="sm" variant="ghost" :aria-label="`${t('common.edit')}: ${r.name}`" @click="editRole(r)">{{
+                    t("common.edit")
+                  }}</Btn>
                   <Btn
                     v-if="!r.builtin"
                     size="sm"
                     variant="danger"
-                    icon="✕"
                     :aria-label="`${t('common.delete')}: ${r.name}`"
                     busy-key="roles"
                     @click="deleteRole(r)"
-                  />
+                  >{{ t("common.delete") }}</Btn>
                 </div>
               </td>
             </tr>
