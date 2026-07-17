@@ -8,12 +8,21 @@ Always-on control plane:
   - manages panel users and their permissions (users.json in GCS)
   - manages the idle-watchdog timeout at runtime (watchdog.json in GCS)
 
-Permissions (per user):
-  view      see status / metrics / players
+Permissions (per user), granular (v3):
+  view      see status / overview / players / metrics
   power     start / stop the VM
-  config    edit PalWorldSettings.ini and the watchdog timeout
+  saves     manage save slots (create/activate/clone/rename/delete/backup/restore)
+  mods      manage mods
+  settings  edit PalWorldSettings.ini (+ /api/restart)
+  watchdog  edit the idle-watchdog timeout
   commands  run REST commands (announce/kick/ban/save/shutdown/...)
-  users     manage panel users
+  users     manage panel users AND roles
+
+  Legacy records/roles holding the old coarse "config" permission expand to
+  {saves, mods, settings, watchdog} at read time via _expand_perms() -- never
+  breaks an existing admin. Users may also hold a "role" (see roles.json):
+  when set (and not "custom"), the role's perms are the effective set;
+  _effective_perms() resolves role-vs-per-user-perms in one place.
 
 Auth (session tokens):
   POST /api/login {username,password} verifies against the existing PBKDF2 users.json
@@ -33,8 +42,8 @@ Routing:
   Routes are declared in ROUTES as (method_spec, path_matcher, required_perm, handler)
   tuples so every route's permission gate lives right next to its path/method. A
   method_spec of "NOT_GET" matches any method except GET (used for saves/mods writes,
-  which accept POST/DELETE/etc. all gated by the same "config" permission). A
-  required_perm of None means "authenticated user, no extra permission needed".
+  which accept POST/DELETE/etc., gated by the "saves"/"mods" permission respectively).
+  A required_perm of None means "authenticated user, no extra permission needed".
 
 Error envelope:
   Every coordinator-owned JSON response (not the raw Palworld-REST passthrough bodies
@@ -51,7 +60,7 @@ RBAC propagation (H1):
 Env vars (set by Terraform):
   PROJECT_ID, VM_ZONE, VM_INSTANCE   target instance
   VM_IP, VM_PORT                     VM static IP + local agent port (8080)
-  PANEL_BUCKET                       GCS bucket holding users.json / watchdog.json
+  PANEL_BUCKET                       GCS bucket holding users.json / roles.json / watchdog.json
   PANEL_USER, PANEL_PASSWORD         seed super-admin + agent proxy creds
   INTERNAL_TOKEN                     shared secret for the watchdog endpoints + RBAC signing
   IDLE_POLL_DEFAULT, IDLE_GRACE_DEFAULT  seed watchdog timeout
@@ -83,8 +92,22 @@ IDLE_GRACE_DEFAULT = int(os.environ.get("IDLE_GRACE_DEFAULT", "1800"))
 INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 VM_BASE = f"http://{VM_IP}:{VM_PORT}"
 USERS_OBJECT = "users.json"
+ROLES_OBJECT = "roles.json"
 WD_OBJECT = "watchdog.json"
-PERMS = ["view", "power", "config", "commands", "users"]
+PERMS = ["view", "power", "saves", "mods", "settings", "watchdog", "commands", "users"]
+
+# Preset permission bundles, seeded into roles.json on first load. Perms are
+# editable afterwards (even for builtins) but a builtin's identity/deletion
+# is protected -- see _handle_roles().
+BUILTIN_ROLES = {
+    "owner": {"perms": list(PERMS), "builtin": True},
+    "operator": {
+        "perms": ["view", "power", "saves", "mods", "settings", "watchdog", "commands"],
+        "builtin": True,
+    },
+    "moderator": {"perms": ["view", "commands"], "builtin": True},
+    "viewer": {"perms": ["view"], "builtin": True},
+}
 
 # PBKDF2 iteration counts: new/rotated passwords use the current (OWASP-ish) count;
 # records created before this change carry no "iterations" field and are treated as
@@ -137,6 +160,48 @@ def _store(name, data):
 
 
 # ---------------------------------------------------------------------------
+# permissions — legacy expansion + role resolution
+# ---------------------------------------------------------------------------
+
+
+def _expand_perms(perms):
+    """Expand the legacy coarse "config" permission into the granular set it
+    replaced ({saves, mods, settings, watchdog}), preserving order and
+    deduping. Idempotent -- safe to call more than once on the same list, and
+    a no-op for a list that never held "config"."""
+    expanded = []
+    for p in perms or []:
+        if p == "config":
+            for q in ("saves", "mods", "settings", "watchdog"):
+                if q not in expanded:
+                    expanded.append(q)
+        elif p not in expanded:
+            expanded.append(p)
+    return expanded
+
+
+def _load_roles():
+    return _load(ROLES_OBJECT, lambda: {"roles": {k: dict(v) for k, v in BUILTIN_ROLES.items()}})
+
+
+def _effective_perms(rec):
+    """Resolve a user record's effective permissions (v3 roles).
+
+    If the record holds a "role" other than "custom" (and that role still
+    exists in roles.json), the role's perms are authoritative -- any
+    per-user "perms" override is ignored. Otherwise (role == "custom", role
+    unset/legacy, or a role that's since been deleted) the per-user "perms"
+    list is used directly. Either way, the legacy "config" perm is expanded.
+    """
+    role = rec.get("role")
+    if role and role != "custom":
+        role_rec = _load_roles().get("roles", {}).get(role)
+        if role_rec:
+            return _expand_perms(role_rec.get("perms", []))
+    return _expand_perms(rec.get("perms", []))
+
+
+# ---------------------------------------------------------------------------
 # users
 # ---------------------------------------------------------------------------
 
@@ -145,23 +210,35 @@ def _hash_pw(password, salt, iterations):
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), iterations).hex()
 
 
-def _new_user(password, perms, iterations=PBKDF2_ITERATIONS):
+def _new_user(password, perms, iterations=PBKDF2_ITERATIONS, role="custom"):
     salt = os.urandom(16).hex()
     return {
         "salt": salt,
         "hash": _hash_pw(password, salt, iterations),
         "perms": perms,
+        "role": role,
         "iterations": iterations,
         "ver": 0,
     }
 
 
 def _load_users():
-    return _load(USERS_OBJECT, lambda: {"users": {PANEL_USER: _new_user(PANEL_PASSWORD, list(PERMS))}})
+    return _load(
+        USERS_OBJECT,
+        lambda: {"users": {PANEL_USER: _new_user(PANEL_PASSWORD, list(PERMS), role="owner")}},
+    )
 
 
 def _users_public(data):
-    return [{"username": u, "perms": r.get("perms", [])} for u, r in data.get("users", {}).items()]
+    return [
+        {
+            "username": u,
+            "role": r.get("role", "custom"),
+            "perms": r.get("perms", []),
+            "effective_perms": _effective_perms(r),
+        }
+        for u, r in data.get("users", {}).items()
+    ]
 
 
 def _client_ip(request):
@@ -210,7 +287,7 @@ def _rehash_user(username, password):
         rec = data.get("users", {}).get(username)
         if not rec:
             return
-        new_fields = _new_user(password, rec.get("perms", []))
+        new_fields = _new_user(password, rec.get("perms", []), role=rec.get("role", "custom"))
         new_fields["ver"] = rec.get("ver", 0)
         rec.update(new_fields)
         _store(USERS_OBJECT, data)
@@ -256,7 +333,7 @@ def _authenticate_basic(request):
         _note_failed_login(ip)
         return None
     _clear_failed_login(ip)
-    return {"name": a.username, "perms": rec.get("perms", [])}
+    return {"name": a.username, "perms": _effective_perms(rec)}
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +397,9 @@ def _authenticate_bearer(token):
         return None
     if payload.get("ver", 0) != rec.get("ver", 0):
         return None  # token was issued before a logout-all / password change
-    return {"name": username, "perms": rec.get("perms", [])}
+    # Re-read from users.json (rather than trusting the token's embedded
+    # perms) so a role change takes effect on the very next request.
+    return {"name": username, "perms": _effective_perms(rec)}
 
 
 def _authenticate(request):
@@ -479,7 +558,7 @@ def _h_login(request):
         _note_failed_login(ip)
         return _err("invalid credentials", 401)
     _clear_failed_login(ip)
-    perms = rec.get("perms", [])
+    perms = _effective_perms(rec)
     ver = rec.get("ver", 0)
     token, exp = _make_token(username, perms, ver)
     return _ok({"token": token, "user": username, "perms": perms, "exp": exp})
@@ -514,7 +593,7 @@ def _h_account_password(request, user, path, method):
     rec = data.get("users", {}).get(user["name"])
     if not rec:
         return _err("user not found", 404)
-    new_fields = _new_user(new, rec.get("perms", []))
+    new_fields = _new_user(new, rec.get("perms", []), role=rec.get("role", "custom"))
     new_fields["ver"] = rec.get("ver", 0) + 1  # bump: invalidate every outstanding token
     rec.update(new_fields)
     _store(USERS_OBJECT, data)
@@ -559,6 +638,10 @@ def _h_watchdog_post(request, user, path, method):
 
 def _h_users(request, user, path, method):
     return _handle_users(request, method, path)
+
+
+def _h_roles(request, user, path, method):
+    return _handle_roles(request, method, path)
 
 
 def _h_vm_status(request, user, path, method):
@@ -609,6 +692,10 @@ def _users_path(path):
     return path == "/api/users" or path.startswith("/api/users/")
 
 
+def _roles_path(path):
+    return path == "/api/roles" or path.startswith("/api/roles/")
+
+
 ROUTES = [
     ("GET", _exact("/api/session"), None, _h_session),
     ("POST", _exact("/api/logout"), None, _h_logout),
@@ -616,24 +703,26 @@ ROUTES = [
     ("POST", _exact("/api/account/password"), None, _h_account_password),
     ("GET", _exact("/api/overview"), "view", _h_overview),
     ("GET", _exact("/api/watchdog"), "view", _h_watchdog_get),
-    ("POST", _exact("/api/watchdog"), "config", _h_watchdog_post),
+    ("POST", _exact("/api/watchdog"), "watchdog", _h_watchdog_post),
     (None, _users_path, "users", _h_users),
+    (None, _roles_path, "users", _h_roles),
     ("GET", _exact("/api/vm/status"), "view", _h_vm_status),
     ("POST", _exact("/api/vm/start"), "power", _h_vm_start),
     ("POST", _exact("/api/vm/stop"), "power", _h_vm_stop),
     # config (PalWorldSettings.ini) proxy
     ("GET", _prefix("/api/config"), "view", _h_proxy),
-    ("POST", _prefix("/api/config"), "config", _h_proxy),
+    ("POST", _prefix("/api/config"), "settings", _h_proxy),
     # Palworld REST passthrough
     ("GET", _prefix("/api/rest/"), "view", _h_proxy),
     ("POST", _prefix("/api/rest/"), "commands", _h_proxy),
-    # save slots + mods (file manipulation on the VM; covers list/create/activate/
-    # backup/backups/restore/delete and list/upload/url/enable/disable/delete)
+    # save slots (file manipulation on the VM; covers list/create/activate/
+    # backup/backups/restore/delete)
     ("GET", _prefix("/api/saves"), "view", _h_proxy_long),
-    ("NOT_GET", _prefix("/api/saves"), "config", _h_proxy_long),
+    ("NOT_GET", _prefix("/api/saves"), "saves", _h_proxy_long),
+    # mods (list/upload/url/enable/disable/delete)
     ("GET", _prefix("/api/mods"), "view", _h_proxy_long),
-    ("NOT_GET", _prefix("/api/mods"), "config", _h_proxy_long),
-    ("POST", _exact("/api/restart"), "config", _h_proxy),
+    ("NOT_GET", _prefix("/api/mods"), "mods", _h_proxy_long),
+    ("POST", _exact("/api/restart"), "settings", _h_proxy),
 ]
 
 
@@ -696,28 +785,44 @@ def _handle_users(request, method, path):
     # force a fresh copy so cache TTL doesn't hide concurrent edits
     data = json.loads(json.dumps(data))
     users = data.setdefault("users", {})
+    roles = _load_roles().get("roles", {})
 
     if method == "GET":
-        return _ok({"users": _users_public(data), "all_perms": PERMS})
+        return _ok({"users": _users_public(data), "all_perms": PERMS, "roles": list(roles.keys())})
 
     if method == "POST":
         body = request.get_json(silent=True) or {}
         username = (body.get("username") or "").strip()
         password = body.get("password") or ""
-        perms = [p for p in (body.get("perms") or []) if p in PERMS]
         if not username:
             return _err("username required", 400)
+
+        role_given = "role" in body
+        role = ((body.get("role") or "custom").strip() or "custom") if role_given else None
+        if role and role != "custom" and role not in roles:
+            return _err(f"unknown role {role!r}", 400)
+
+        perms_given = "perms" in body
+        perms = [p for p in (body.get("perms") or []) if p in PERMS] if perms_given else None
+
         if username in users:
-            users[username]["perms"] = perms
+            existing = users[username]
+            new_role = role if role_given else existing.get("role", "custom")
+            new_perms = perms if perms_given else existing.get("perms", [])
+            existing["role"] = new_role
+            existing["perms"] = new_perms
             if password:
-                new_fields = _new_user(password, perms)
-                new_fields["ver"] = users[username].get("ver", 0) + 1  # bump, don't reset to 0
-                users[username] = {**users[username], **new_fields}
+                new_fields = _new_user(password, new_perms, role=new_role)
+                new_fields["ver"] = existing.get("ver", 0) + 1  # bump, don't reset to 0
+                users[username] = {**existing, **new_fields}
         else:
             if not password:
                 return _err("password required for new user", 400)
-            users[username] = _new_user(password, perms)
-        if not any("users" in r.get("perms", []) for r in users.values()):
+            new_role = role if role_given else "custom"
+            new_perms = perms if perms_given else []
+            users[username] = _new_user(password, new_perms, role=new_role)
+
+        if not any("users" in _effective_perms(r) for r in users.values()):
             return _err("at least one user must keep the 'users' permission", 400)
         _store(USERS_OBJECT, data)
         return _ok({"users": _users_public(data)})
@@ -727,10 +832,63 @@ def _handle_users(request, method, path):
         if username not in users:
             return _err("not found", 404)
         remaining = {u: r for u, r in users.items() if u != username}
-        if not any("users" in r.get("perms", []) for r in remaining.values()):
+        if not any("users" in _effective_perms(r) for r in remaining.values()):
             return _err("cannot delete the last user manager", 400)
         del users[username]
         _store(USERS_OBJECT, data)
         return _ok({"users": _users_public(data)})
+
+    return _err("method not allowed", 405)
+
+
+def _roles_public(roles):
+    return [
+        {"name": n, "perms": r.get("perms", []), "builtin": bool(r.get("builtin"))}
+        for n, r in roles.items()
+    ]
+
+
+def _handle_roles(request, method, path):
+    data = _load_roles()
+    # force a fresh copy so cache TTL doesn't hide concurrent edits
+    data = json.loads(json.dumps(data))
+    roles = data.setdefault("roles", {})
+    # backfill any builtin that predates this deploy / was missing from the seed
+    for name, r in BUILTIN_ROLES.items():
+        roles.setdefault(name, dict(r))
+
+    if method == "GET":
+        return _ok({"roles": _roles_public(roles), "all_perms": PERMS})
+
+    if method == "POST":
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return _err("name required", 400)
+        if name == "custom":
+            # reserved sentinel: _effective_perms treats role=="custom" as "use
+            # the per-user perms override", so a role literally named custom
+            # could never take effect. Reject it (matches the frontend guard).
+            return _err('"custom" is a reserved role name', 400)
+        perms = [p for p in (body.get("perms") or []) if p in PERMS]
+        existing = roles.get(name)
+        builtin = bool(existing.get("builtin")) if existing else False
+        roles[name] = {"perms": perms, "builtin": builtin}
+        _store(ROLES_OBJECT, data)
+        return _ok({"roles": _roles_public(roles)})
+
+    if method == "DELETE":
+        name = path.split("/api/roles/", 1)[1] if "/api/roles/" in path else ""
+        role = roles.get(name)
+        if not role:
+            return _err("not found", 404)
+        if role.get("builtin"):
+            return _err("cannot delete a built-in role", 400)
+        users_data = _load_users().get("users", {})
+        if any(r.get("role") == name for r in users_data.values()):
+            return _err("cannot delete a role while a user still holds it", 400)
+        del roles[name]
+        _store(ROLES_OBJECT, data)
+        return _ok({"roles": _roles_public(roles)})
 
     return _err("method not allowed", 405)

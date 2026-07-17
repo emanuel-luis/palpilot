@@ -9,9 +9,17 @@
       generalizing the legacy `savesBusy`/`modsBusy` pattern plan-wide.
   Either way, a loading button is disabled and shows a small inline spinner
   before its label so screen readers/sighted users both get the state.
+
+  Icon-only compact mode: pass `icon` (a single glyph, e.g. "▶"/"✕"/"⚙") with
+  NO default slot content and it renders as a square symbol button in the
+  base.css `.icon-btn` look instead of a labelled pill — used for row actions
+  (Saves/Mods/Commands) that need to stay on one `.actions` line. `icon` mode
+  REQUIRES `aria-label` (also set as the native `title` for a hover tooltip);
+  a dev-mode console warning fires if it's missing so this never regresses
+  into an unlabelled icon button.
 -->
 <script setup>
-import { computed } from "vue";
+import { computed, useSlots } from "vue";
 
 import { isBusy } from "../../api.js";
 
@@ -23,26 +31,38 @@ const props = defineProps({
   busyKey: { type: String, default: "" },
   disabled: { type: Boolean, default: false },
   ariaLabel: { type: String, default: "" },
+  icon: { type: String, default: "" }, // single glyph; renders icon-only when there's no default slot
 });
 
 defineEmits(["click"]);
 
+const slots = useSlots();
 const isLoading = computed(() => props.loading || (props.busyKey ? isBusy(props.busyKey) : false));
 const isDisabled = computed(() => props.disabled || isLoading.value);
+const isIconOnly = computed(() => !!props.icon && !slots.default);
+
+if (import.meta.env?.DEV) {
+  if (isIconOnly.value && !props.ariaLabel) {
+    // eslint-disable-next-line no-console
+    console.warn('Btn: icon-only buttons require an "aria-label" (used as the aria-label and hover title).');
+  }
+}
 </script>
 
 <template>
   <button
     class="btn"
-    :class="[variant, size, { loading: isLoading }]"
+    :class="[variant, size, { loading: isLoading, 'icon-only': isIconOnly }]"
     :type="type"
     :disabled="isDisabled"
     :aria-busy="isLoading ? 'true' : undefined"
     :aria-label="ariaLabel || undefined"
+    :title="isIconOnly ? ariaLabel : undefined"
     @click="$emit('click', $event)"
   >
     <span v-if="isLoading" class="spinner" aria-hidden="true"></span>
-    <slot />
+    <span v-else-if="isIconOnly" class="icon-glyph" aria-hidden="true">{{ icon }}</span>
+    <slot v-else />
   </button>
 </template>
 
@@ -93,6 +113,47 @@ const isDisabled = computed(() => props.disabled || isLoading.value);
 .btn:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* Icon-only: the base.css .icon-btn box (compact, symbol, hairline border)
+   regardless of `variant`; the variant only tints the glyph so semantics
+   (danger/ok) still read at a glance in a dense `.actions` row. */
+.btn.icon-only {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  gap: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+}
+.btn.icon-only:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn.icon-only.ok {
+  color: var(--ok);
+}
+.btn.icon-only.ok:hover:not(:disabled) {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.btn.icon-only.danger {
+  color: var(--danger);
+}
+.btn.icon-only.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn.icon-only.sm {
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+}
+.icon-glyph {
+  line-height: 1;
 }
 .spinner {
   width: 12px;

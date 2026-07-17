@@ -281,7 +281,7 @@ const BACKUP_COLUMNS = [
           <Field :label="t('saves.nameLabel')" label-sr-only class="grow" v-slot="{ id }">
             <input :id="id" v-model="newName" :placeholder="t('saves.namePlaceholder')" />
           </Field>
-          <Btn type="submit" busy-key="saves">{{ t("saves.create") }}</Btn>
+          <Btn type="submit" icon="＋" :aria-label="t('saves.create')" busy-key="saves" />
         </form>
       </Card>
 
@@ -303,31 +303,76 @@ const BACKUP_COLUMNS = [
               <template v-for="s in slots" :key="s.guid">
                 <tr>
                   <td>
-                    {{ s.name }}
-                    <Badge v-if="s.active" tone="ok">{{ t("saves.badgeActive") }}</Badge>
-                    <Badge v-if="s.pending" tone="warn">{{ t("saves.badgePending") }}</Badge>
-                    <Badge v-else-if="s.empty">{{ t("saves.badgeEmpty") }}</Badge>
+                    <span class="name-cell">
+                      <span class="clamp" :title="s.name">{{ s.name }}</span>
+                      <Badge v-if="s.active" tone="ok">{{ t("saves.badgeActive") }}</Badge>
+                      <Badge v-if="s.pending" tone="warn">{{ t("saves.badgePending") }}</Badge>
+                      <Badge v-else-if="s.empty">{{ t("saves.badgeEmpty") }}</Badge>
+                    </span>
                   </td>
-                  <td class="mono">{{ s.guid }}</td>
+                  <td class="mono break">{{ s.guid }}</td>
                   <td style="text-align: right">{{ fmtSize(s.size) }}</td>
                   <td>{{ fmtDate(s.last_backup) }}</td>
-                  <td class="actions-cell">
-                    <Btn v-if="!s.active" size="sm" variant="ok" busy-key="saves" @click="activateSlot(s)">
-                      {{ t("saves.activate") }}
-                    </Btn>
-                    <Btn size="sm" variant="ghost" busy-key="saves" :disabled="s.empty" @click="backupSlot(s)">
-                      {{ t("saves.backup") }}
-                    </Btn>
-                    <Btn size="sm" variant="ghost" busy-key="saves" @click="openClone(s)">{{ t("saves.clone") }}</Btn>
-                    <Btn size="sm" variant="ghost" busy-key="saves" @click="openRename(s)">
-                      {{ t("saves.rename") }}
-                    </Btn>
-                    <Btn size="sm" variant="ghost" busy-key="saves-backups" @click="toggleBackups(s)">
-                      {{ ensureBackups(s.guid).open ? t("saves.hideBackups") : t("saves.showBackups") }}
-                    </Btn>
-                    <Btn size="sm" variant="danger" busy-key="saves" :disabled="s.active" @click="deleteSlot(s)">
-                      {{ t("common.delete") }}
-                    </Btn>
+                  <td>
+                    <div class="actions end">
+                      <Btn
+                        v-if="!s.active"
+                        size="sm"
+                        variant="ok"
+                        icon="★"
+                        :aria-label="`${t('saves.activate')}: ${s.name}`"
+                        busy-key="saves"
+                        @click="activateSlot(s)"
+                      />
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        icon="↧"
+                        :aria-label="`${t('saves.backup')}: ${s.name}`"
+                        busy-key="saves"
+                        :disabled="s.empty"
+                        @click="backupSlot(s)"
+                      />
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        icon="⧉"
+                        :aria-label="`${t('saves.clone')}: ${s.name}`"
+                        busy-key="saves"
+                        @click="openClone(s)"
+                      />
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        icon="✎"
+                        :aria-label="`${t('saves.rename')}: ${s.name}`"
+                        busy-key="saves"
+                        @click="openRename(s)"
+                      />
+                      <Btn
+                        size="sm"
+                        variant="ghost"
+                        icon="›"
+                        class="chevron-btn"
+                        :class="{ open: ensureBackups(s.guid).open }"
+                        :aria-label="
+                          ensureBackups(s.guid).open
+                            ? `${t('saves.hideBackups')}: ${s.name}`
+                            : `${t('saves.showBackups')}: ${s.name}`
+                        "
+                        busy-key="saves-backups"
+                        @click="toggleBackups(s)"
+                      />
+                      <Btn
+                        size="sm"
+                        variant="danger"
+                        icon="✕"
+                        :aria-label="`${t('common.delete')}: ${s.name}`"
+                        busy-key="saves"
+                        :disabled="s.active"
+                        @click="deleteSlot(s)"
+                      />
+                    </div>
                   </td>
                 </tr>
                 <tr v-if="ensureBackups(s.guid).open">
@@ -341,22 +386,27 @@ const BACKUP_COLUMNS = [
                       :rows="ensureBackups(s.guid).list"
                       row-key="ref"
                     >
-                      <template #cell-file="{ value }"><span class="mono">{{ value }}</span></template>
+                      <template #cell-file="{ value }"><span class="mono break">{{ value }}</span></template>
                       <template #cell-size="{ value }">{{ fmtSize(value) }}</template>
                       <template #cell-created="{ value }">{{ fmtDate(value) }}</template>
                       <template #cell-actions="{ row }">
-                        <div class="actions-cell">
-                          <Btn size="sm" variant="ghost" busy-key="saves-backups" @click="restoreBackup(s, row)">
-                            {{ t("saves.restore") }}
-                          </Btn>
+                        <div class="actions end">
                           <Btn
                             size="sm"
                             variant="ghost"
+                            icon="↺"
+                            :aria-label="`${t('saves.restore')}: ${row.file}`"
+                            busy-key="saves-backups"
+                            @click="restoreBackup(s, row)"
+                          />
+                          <Btn
+                            size="sm"
+                            variant="ghost"
+                            icon="⧉"
+                            :aria-label="`${t('saves.restoreAsNew')}: ${row.file}`"
                             busy-key="saves-backups"
                             @click="openRestoreAsNew(s, row)"
-                          >
-                            {{ t("saves.restoreAsNew") }}
-                          </Btn>
+                          />
                         </div>
                       </template>
                     </DataTable>
@@ -387,6 +437,15 @@ const BACKUP_COLUMNS = [
 </template>
 
 <style scoped>
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.name-cell .clamp {
+  min-width: 0;
+}
 .saves-view {
   display: flex;
   flex-direction: column;
@@ -420,17 +479,19 @@ const BACKUP_COLUMNS = [
   text-align: center;
   padding: 16px 8px;
 }
-.actions-cell {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
 .backups-cell {
   background: var(--panel-2);
 }
 .backups-title {
   margin: 4px 0 10px;
   font-size: 13px;
+}
+/* Show/hide-backups reuses the Section "expand ›" glyph, rotated open. */
+.chevron-btn :deep(.icon-glyph) {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.chevron-btn.open :deep(.icon-glyph) {
+  transform: rotate(90deg);
 }
 </style>
