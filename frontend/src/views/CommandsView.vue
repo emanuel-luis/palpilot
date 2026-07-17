@@ -103,7 +103,7 @@ async function forceStop() {
           <Field :label="t('commands.announcementMessage')" label-sr-only class="grow" v-slot="{ id }">
             <input :id="id" v-model="ann.message" :placeholder="t('commands.announcementMessage')" />
           </Field>
-          <Btn type="submit" busy-key="commands">{{ t("commands.announce") }}</Btn>
+          <Btn type="submit" icon="✦" :aria-label="t('commands.announce')" busy-key="commands" />
         </form>
       </Card>
 
@@ -116,15 +116,17 @@ async function forceStop() {
             <input :id="id" v-model="mod.message" :placeholder="t('commands.reasonPlaceholder')" />
           </Field>
         </div>
-        <div class="row" style="margin-top: 10px">
-          <Btn busy-key="commands" @click="kick">{{ t("commands.kick") }}</Btn>
-          <Btn variant="danger" busy-key="commands" @click="ban">{{ t("commands.ban") }}</Btn>
-          <Btn variant="ghost" busy-key="commands" @click="unban">{{ t("commands.unban") }}</Btn>
+        <div class="actions" style="margin-top: 10px">
+          <Btn icon="⏏" :aria-label="t('commands.kick')" busy-key="commands" @click="kick" />
+          <Btn variant="danger" icon="⊘" :aria-label="t('commands.ban')" busy-key="commands" @click="ban" />
+          <Btn variant="ghost" icon="↺" :aria-label="t('commands.unban')" busy-key="commands" @click="unban" />
         </div>
       </Card>
 
       <Card :title="t('commands.worldTitle')">
-        <Btn busy-key="commands" @click="saveWorld">{{ t("commands.saveWorld") }}</Btn>
+        <div class="actions">
+          <Btn icon="↧" :aria-label="t('commands.saveWorld')" busy-key="commands" @click="saveWorld" />
+        </div>
       </Card>
 
       <Card :title="t('commands.shutdownTitle')" :hint="t('commands.shutdownHint')">
@@ -136,9 +138,9 @@ async function forceStop() {
             <input :id="id" v-model="shutdown.message" :placeholder="t('commands.restartingPlaceholder')" />
           </Field>
         </div>
-        <div class="row" style="margin-top: 10px">
-          <Btn variant="danger" busy-key="commands" @click="shutdownServer">{{ t("commands.shutdown") }}</Btn>
-          <Btn variant="danger" busy-key="commands" @click="forceStop">{{ t("commands.forceStop") }}</Btn>
+        <div class="actions" style="margin-top: 10px">
+          <Btn variant="danger" icon="⏻" :aria-label="t('commands.shutdown')" busy-key="commands" @click="shutdownServer" />
+          <Btn variant="danger" icon="■" :aria-label="t('commands.forceStop')" busy-key="commands" @click="forceStop" />
         </div>
       </Card>
     </template>

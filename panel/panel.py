@@ -146,9 +146,29 @@ if not BACKUP_BUCKET:
 OPTION_HEADER = "[/Script/Pal.PalGameWorldSettings]"
 GUS_HEADER = "[/Script/Pal.PalGameLocalSettings]"
 
-# RBAC permission set propagated from the coordinator (view/power/config/
-# commands/users). Basic-Auth (break-glass) is granted all of them.
-ALL_PERMS = {"view", "power", "config", "commands", "users"}
+# RBAC permission set propagated from the coordinator (v3, granular):
+# view/power/saves/mods/settings/watchdog/commands/users. Basic-Auth
+# (break-glass) is granted all of them. The legacy coarse "config" perm
+# (if ever seen on an incoming X-Coord-Perms header from an older
+# coordinator) is expanded via _expand_perms() before being checked.
+ALL_PERMS = {"view", "power", "saves", "mods", "settings", "watchdog", "commands", "users"}
+
+
+def _expand_perms(perms):
+    """Mirror of the coordinator's _expand_perms(): expand the legacy coarse
+    "config" permission into the granular set it replaced ({saves, mods,
+    settings, watchdog}). Idempotent, dedups, preserves order. Accepts any
+    iterable (list or set) of perm strings."""
+    expanded = []
+    for p in perms or []:
+        if p == "config":
+            for q in ("saves", "mods", "settings", "watchdog"):
+                if q not in expanded:
+                    expanded.append(q)
+        elif p not in expanded:
+            expanded.append(p)
+    return expanded
+
 
 # ---------------------------------------------------------------------------
 # fsutil — atomic writes, safe names
@@ -1591,7 +1611,11 @@ def _verify_coord_headers(headers):
     expected = hmac.new(INTERNAL_TOKEN.encode(), msg, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig_h):
         return None
-    perms = {p.strip() for p in perms_h.split(",") if p.strip()}
+    raw_perms = {p.strip() for p in perms_h.split(",") if p.strip()}
+    # Legacy tolerance: an older coordinator (or a stale token) may still send
+    # the coarse "config" perm -- expand it so per-endpoint checks below (which
+    # use the granular names) keep working.
+    perms = set(_expand_perms(raw_perms))
     return user, perms
 
 
@@ -1758,7 +1782,7 @@ def build_app():
         return {"raw": raw, "options": parse_options(raw), "path": INI_PATH}
 
     @app.post("/api/config")
-    async def post_config(payload: dict, restart: bool = False, _: str = Depends(require("config"))):
+    async def post_config(payload: dict, restart: bool = False, _: str = Depends(require("settings"))):
         if "raw" in payload and payload["raw"] is not None:
             raw = payload["raw"]
         elif "options" in payload:
@@ -1777,7 +1801,7 @@ def build_app():
         return result
 
     @app.post("/api/restart")
-    def post_restart(_: str = Depends(require("config"))):
+    def post_restart(_: str = Depends(require("settings"))):
         try:
             restart_service()
             return {"restarted": True}
@@ -1813,26 +1837,26 @@ def build_app():
         return list_slots()
 
     @app.post("/api/saves")
-    async def saves_create(payload: dict, _: str = Depends(require("config"))):
+    async def saves_create(payload: dict, _: str = Depends(require("saves"))):
         name = (payload or {}).get("name") or ""
         return _envelope(create_slot(name))
 
     @app.post("/api/saves/{guid}/clone")
-    async def saves_clone(guid: str, payload: dict, _: str = Depends(require("config"))):
+    async def saves_clone(guid: str, payload: dict, _: str = Depends(require("saves"))):
         name = (payload or {}).get("name") or ""
         return _envelope(clone_slot(guid, name))
 
     @app.post("/api/saves/{guid}/rename")
-    async def saves_rename(guid: str, payload: dict, _: str = Depends(require("config"))):
+    async def saves_rename(guid: str, payload: dict, _: str = Depends(require("saves"))):
         name = (payload or {}).get("name") or ""
         return _envelope(rename_slot(guid, name))
 
     @app.post("/api/saves/{guid}/activate")
-    def saves_activate(guid: str, restart: bool = True, _: str = Depends(require("config"))):
+    def saves_activate(guid: str, restart: bool = True, _: str = Depends(require("saves"))):
         return _envelope(activate_slot(guid, restart=restart))
 
     @app.post("/api/saves/{guid}/backup")
-    def saves_backup(guid: str, _: str = Depends(require("config"))):
+    def saves_backup(guid: str, _: str = Depends(require("saves"))):
         return _envelope(backup_world(guid, label="manual"))
 
     @app.get("/api/saves/{guid}/backups")
@@ -1842,7 +1866,7 @@ def build_app():
         return list_backups(guid)
 
     @app.post("/api/saves/{guid}/restore")
-    async def saves_restore(guid: str, payload: dict, _: str = Depends(require("config"))):
+    async def saves_restore(guid: str, payload: dict, _: str = Depends(require("saves"))):
         payload = payload or {}
         ref = payload.get("ref") or ""
         as_new_slot = bool(payload.get("as_new_slot") or False)
@@ -1850,7 +1874,7 @@ def build_app():
         return _envelope(restore_backup(guid, ref, as_new_slot=as_new_slot, name=name))
 
     @app.delete("/api/saves/{guid}")
-    def saves_delete(guid: str, _: str = Depends(require("config"))):
+    def saves_delete(guid: str, _: str = Depends(require("saves"))):
         return _envelope(delete_slot(guid))
 
     # ---- mods ----
@@ -1861,7 +1885,7 @@ def build_app():
 
     @app.post("/api/mods/upload")
     async def mods_upload(
-        request: Request, name: str, restart: bool = False, _: str = Depends(require("config"))
+        request: Request, name: str, restart: bool = False, _: str = Depends(require("mods"))
     ):
         # Streamed upload (no python-multipart dependency) with a byte
         # ceiling enforced as chunks arrive, so we never buffer the whole
@@ -1942,7 +1966,7 @@ def build_app():
         return _envelope(r)
 
     @app.post("/api/mods/url")
-    def mods_url(payload: dict, restart: bool = False, _: str = Depends(require("config"))):
+    def mods_url(payload: dict, restart: bool = False, _: str = Depends(require("mods"))):
         r = install_mod_url((payload or {}).get("url", ""), (payload or {}).get("name", ""))
         if r.get("ok") and restart:
             try:
@@ -1953,20 +1977,20 @@ def build_app():
         return _envelope(r)
 
     @app.post("/api/mods/ue4ss/install")
-    async def mods_ue4ss_install(payload: dict | None = None, _: str = Depends(require("config"))):
+    async def mods_ue4ss_install(payload: dict | None = None, _: str = Depends(require("mods"))):
         url = (payload or {}).get("url") or ""
         return _envelope(install_ue4ss_runtime(url))
 
     @app.post("/api/mods/{name}/enable")
-    def mods_enable(name: str, _: str = Depends(require("config"))):
+    def mods_enable(name: str, _: str = Depends(require("mods"))):
         return _envelope(set_mod_enabled(name, True))
 
     @app.post("/api/mods/{name}/disable")
-    def mods_disable(name: str, _: str = Depends(require("config"))):
+    def mods_disable(name: str, _: str = Depends(require("mods"))):
         return _envelope(set_mod_enabled(name, False))
 
     @app.delete("/api/mods/{name}")
-    def mods_delete(name: str, _: str = Depends(require("config"))):
+    def mods_delete(name: str, _: str = Depends(require("mods"))):
         return _envelope(delete_mod(name))
 
     return app

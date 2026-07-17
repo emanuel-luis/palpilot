@@ -1,9 +1,9 @@
 <!--
   WatchdogView: idle-watchdog poll interval + idle-grace editor against
-  GET/POST /api/watchdog (perm "view" to read, "config" to save — see
-  docs/FRONTEND_V2_PLAN.md). Grace is stored in seconds server-side but edited
-  in minutes here for readability, mirroring the legacy tab's wdGraceMin
-  computed getter/setter.
+  GET/POST /api/watchdog (perm "view" to read, "watchdog" to save — see
+  docs/CONSOLE_V3_PLAN.md's route->perm map). Grace is stored in seconds
+  server-side but edited in minutes here for readability, mirroring the
+  legacy tab's wdGraceMin computed getter/setter.
 -->
 <script setup>
 import { computed, onMounted, reactive, ref } from "vue";
@@ -75,7 +75,7 @@ async function save() {
       <p class="muted">{{ t("watchdog.summary", { poll: wd.poll_seconds, grace: graceMinutes }) }}</p>
       <div class="row end">
         <Btn variant="ghost" busy-key="watchdog" @click="load">{{ t("watchdog.reload") }}</Btn>
-        <Btn busy-key="watchdog" :disabled="!session.can('config')" @click="save">{{ t("watchdog.save") }}</Btn>
+        <Btn busy-key="watchdog" :disabled="!session.can('watchdog')" @click="save">{{ t("watchdog.save") }}</Btn>
       </div>
     </template>
   </Card>

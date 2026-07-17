@@ -1,13 +1,14 @@
 <!--
-  App shell: grouped sidebar nav (Overview / Server / Admin per the plan),
-  header (server status pill + theme toggle + account menu), a router-less
-  view switch (`currentView`, provided to descendants under the "nav" key so
-  any view can navigate — e.g. a "manage saves" link from the Status hero),
-  and the two singleton overlay hosts (Toast, ConfirmDialog).
+  App shell: TWO nav groups — Console (a single item, the unified
+  ServerConsoleView) and Admin (Users, Account) — per docs/CONSOLE_V3_PLAN.md
+  §B. Header (server status pill + theme toggle + account menu), a
+  router-less view switch (`currentView`, provided to descendants under the
+  "nav" key so any view can navigate), and the two singleton overlay hosts
+  (Toast, ConfirmDialog).
 
-  No vue-router: 8 views behind perm gates don't need URL-driven routing, and
-  this keeps the single-file build simple. If deep-linking is ever wanted,
-  `currentView` is the one place to wire it to location.hash.
+  No vue-router: 3 nav destinations behind perm gates don't need URL-driven
+  routing, and this keeps the single-file build simple. If deep-linking is
+  ever wanted, `currentView` is the one place to wire it to location.hash.
 -->
 <script setup>
 import { computed, provide, reactive, ref, watch } from "vue";
@@ -22,14 +23,9 @@ import ThemeToggle from "./components/ui/ThemeToggle.vue";
 import { useServerStore } from "./stores/server.js";
 import { useSessionStore } from "./stores/session.js";
 import AccountView from "./views/AccountView.vue";
-import CommandsView from "./views/CommandsView.vue";
 import LoginView from "./views/LoginView.vue";
-import ModsView from "./views/ModsView.vue";
-import SavesView from "./views/SavesView.vue";
-import SettingsView from "./views/SettingsView.vue";
-import StatusView from "./views/StatusView.vue";
+import ServerConsoleView from "./views/ServerConsoleView.vue";
 import UsersView from "./views/UsersView.vue";
-import WatchdogView from "./views/WatchdogView.vue";
 
 const { t } = useI18n();
 const session = useSessionStore();
@@ -41,19 +37,20 @@ const { confirm } = useConfirm();
 // nav
 // ---------------------------------------------------------------------------
 
+// Console shows if the user holds ANY perm a Console section is gated by
+// (view/saves/mods/settings/watchdog/commands) — `perms: []` means "always
+// visible" (Account), matching the granular perm map in the plan's §C table.
+const CONSOLE_PERMS = ["view", "saves", "mods", "settings", "watchdog", "commands"];
 const NAV_ITEMS = [
-  { id: "status", group: "overview", perm: "view", component: StatusView },
-  { id: "saves", group: "server", perm: "config", component: SavesView },
-  { id: "mods", group: "server", perm: "config", component: ModsView },
-  { id: "settings", group: "server", perm: "config", component: SettingsView },
-  { id: "commands", group: "server", perm: "commands", component: CommandsView },
-  { id: "watchdog", group: "server", perm: "config", component: WatchdogView },
-  { id: "users", group: "admin", perm: "users", component: UsersView },
-  { id: "account", group: "admin", perm: null, component: AccountView },
+  { id: "console", group: "console", perms: CONSOLE_PERMS, component: ServerConsoleView },
+  { id: "users", group: "admin", perms: ["users"], component: UsersView },
+  { id: "account", group: "admin", perms: [], component: AccountView },
 ];
-const GROUP_ORDER = ["overview", "server", "admin"];
+const GROUP_ORDER = ["console", "admin"];
 
-const visibleItems = computed(() => NAV_ITEMS.filter((item) => session.can(item.perm)));
+const visibleItems = computed(() =>
+  NAV_ITEMS.filter((item) => !item.perms.length || item.perms.some((p) => session.can(p))),
+);
 const navGroups = computed(() =>
   GROUP_ORDER.map((group) => ({
     id: group,
@@ -62,7 +59,7 @@ const navGroups = computed(() =>
   })).filter((g) => g.items.length),
 );
 
-const currentView = ref("status");
+const currentView = ref("console");
 const sidebarOpen = ref(false);
 
 function goTo(id) {
@@ -78,7 +75,7 @@ watch(
   visibleItems,
   (items) => {
     if (!items.find((item) => item.id === currentView.value)) {
-      currentView.value = items[0]?.id || "status";
+      currentView.value = items[0]?.id || "console";
     }
   },
   { immediate: true },

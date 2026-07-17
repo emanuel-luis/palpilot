@@ -102,3 +102,8 @@ read time (a `_expand_perms()` helper on both coordinator and panel). Never brea
 Keep two-tier split, GCS-JSON (add roles.json alongside users.json), hot-deploy, session tokens, per-user `ver`.
 No heavy deps. Nothing deployed by the build. Verify: `npm run build` (single-file), `py_compile`,
 `terraform validate`, contract match coordinator↔panel↔frontend.
+
+## Note (v3): view-only scope
+The Console gates each section by its feature perm (saves/mods/settings/watchdog/commands). A `view`-only
+user (e.g. built-in `viewer`) sees the **status hero** (the read-only overview: power state, players, metrics,
+day) but not the per-feature sections — read-only variants of those sections are intentionally out of scope for v3.

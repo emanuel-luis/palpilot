@@ -12,7 +12,7 @@
 // separate profile fetch.
 import { defineStore } from "pinia";
 
-import { apiPost } from "../api";
+import { apiGet, apiPost } from "../api";
 import { clearToken, decodeToken, getToken, isExpired, setToken } from "../session";
 
 export const useSessionStore = defineStore("session", {
@@ -38,10 +38,23 @@ export const useSessionStore = defineStore("session", {
       if (this.token && payload && !isExpired(payload)) {
         this.user = payload.u || "";
         this.perms = Array.isArray(payload.perms) ? payload.perms : [];
+        // The token's embedded perms can be stale (e.g. a pre-v3 token still
+        // carries the coarse "config" perm for up to 12h). Refresh from the
+        // server, which returns fresh, already-expanded effective perms.
+        this.refresh();
       } else {
         this._clear();
       }
       this.ready = true;
+    },
+
+    /** Refresh {user,perms} from the server's authoritative /api/session. */
+    async refresh() {
+      const r = await apiGet("/api/session");
+      if (r.ok && r.data) {
+        this.user = r.data.user || this.user;
+        if (Array.isArray(r.data.perms)) this.perms = r.data.perms;
+      }
     },
 
     _clear() {

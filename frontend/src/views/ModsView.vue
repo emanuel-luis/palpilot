@@ -21,8 +21,10 @@ import Field from "../components/ui/Field.vue";
 import { useConfirm } from "../components/ui/useConfirm.js";
 import { useToast } from "../components/ui/useToast.js";
 import { useServerStore } from "../stores/server.js";
+import { useSessionStore } from "../stores/session.js";
 
 const { t } = useI18n();
+const session = useSessionStore();
 const server = useServerStore();
 const toast = useToast();
 const { confirm } = useConfirm();
@@ -189,7 +191,7 @@ async function installUe4ss() {
             <Field :label="t('mods.nameOptional')" label-sr-only v-slot="{ id }">
               <input :id="id" v-model="modUrlName" :placeholder="t('mods.nameOptional')" style="max-width: 200px" />
             </Field>
-            <Btn busy-key="mods" @click="installByUrl">{{ t("mods.download") }}</Btn>
+            <Btn icon="↧" :aria-label="t('mods.download')" busy-key="mods" @click="installByUrl" />
           </div>
         </div>
 
@@ -199,7 +201,7 @@ async function installUe4ss() {
             <Field :label="t('mods.chooseFile')" label-sr-only class="grow" v-slot="{ id }">
               <input :id="id" type="file" accept=".pak,.zip" @change="pickFile" />
             </Field>
-            <Btn busy-key="mods" @click="uploadMod">{{ t("mods.upload") }}</Btn>
+            <Btn icon="↥" :aria-label="t('mods.upload')" busy-key="mods" @click="uploadMod" />
           </div>
         </div>
       </Card>
@@ -219,27 +221,46 @@ async function installUe4ss() {
           row-key="name"
           :empty-text="t('mods.noMods')"
         >
-          <template #cell-name="{ value }"><span class="mono">{{ value }}</span></template>
+          <template #cell-name="{ value }"><span class="mono break">{{ value }}</span></template>
           <template #cell-type="{ value }"><Badge>{{ value }}</Badge></template>
           <template #cell-enabled="{ value }">
             <Badge :tone="value ? 'ok' : 'neutral'">{{ value ? t("mods.enabled") : t("mods.disabled") }}</Badge>
           </template>
           <template #cell-source_url="{ value }">
-            <span class="mono truncate">{{ value || "—" }}</span>
+            <span class="mono clamp src-cell" :title="value || ''">{{ value || "—" }}</span>
           </template>
           <template #cell-installed_at="{ value }">{{ fmtDate(value) }}</template>
           <template #cell-size="{ value }">{{ fmtSize(value) }}</template>
           <template #cell-actions="{ row }">
-            <div class="actions-cell">
-              <Btn size="sm" variant="ghost" busy-key="mods" @click="toggleMod(row)">
-                {{ row.enabled ? t("mods.disable") : t("mods.enable") }}
-              </Btn>
-              <Btn size="sm" variant="danger" busy-key="mods" @click="removeMod(row)">{{ t("mods.remove") }}</Btn>
+            <div class="actions end">
+              <Btn
+                size="sm"
+                :variant="row.enabled ? 'ghost' : 'ok'"
+                icon="⏻"
+                :aria-label="`${row.enabled ? t('mods.disable') : t('mods.enable')}: ${row.name}`"
+                busy-key="mods"
+                @click="toggleMod(row)"
+              />
+              <Btn
+                size="sm"
+                variant="danger"
+                icon="✕"
+                :aria-label="`${t('mods.remove')}: ${row.name}`"
+                busy-key="mods"
+                @click="removeMod(row)"
+              />
             </div>
           </template>
         </DataTable>
         <div class="row end">
-          <Btn variant="ghost" busy-key="mods" @click="restartServer">↻ {{ t("mods.restartToApply") }}</Btn>
+          <Btn
+            variant="ghost"
+            icon="↻"
+            :aria-label="t('mods.restartToApply')"
+            busy-key="mods"
+            :disabled="!session.can('settings')"
+            @click="restartServer"
+          />
         </div>
       </Card>
 
@@ -249,9 +270,13 @@ async function installUe4ss() {
             <input :id="id" v-model="ue4ssUrl" :disabled="!capabilities.ue4ss" placeholder="https://…" />
           </Field>
           <span :title="!capabilities.ue4ss ? t('mods.ue4ssNotProton') : ''">
-            <Btn busy-key="ue4ss" :disabled="!capabilities.ue4ss" @click="installUe4ss">
-              {{ t("mods.ue4ssInstall") }}
-            </Btn>
+            <Btn
+              icon="⬡"
+              :aria-label="t('mods.ue4ssInstall')"
+              busy-key="ue4ss"
+              :disabled="!capabilities.ue4ss"
+              @click="installUe4ss"
+            />
           </span>
         </div>
       </Card>
@@ -296,18 +321,7 @@ async function installUe4ss() {
 .row .grow {
   flex: 1;
 }
-.actions-cell {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.truncate {
-  display: inline-block;
+.src-cell {
   max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
 }
 </style>
