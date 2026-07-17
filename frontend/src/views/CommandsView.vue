@@ -1,8 +1,12 @@
 <!--
-  CommandsView: announce / kick / ban / unban / save / shutdown / force-stop
-  against /api/rest/* (perm "commands"; see docs/FRONTEND_V2_PLAN.md). Mirrors
-  the legacy Commands tab's endpoint set (POST_EPS in panel.py:
-  announce/kick/ban/unban/save/shutdown/stop).
+  CommandsView: announce / kick / ban / unban / save / restart / stop /
+  force-stop. announce/kick/ban/unban/save/stop/force-stop go through
+  /api/rest/* (perm "commands"; see docs/FRONTEND_V2_PLAN.md), mirroring the
+  legacy Commands tab's endpoint set (POST_EPS in panel.py). "Restart server"
+  is the separate /api/restart route (perm "settings", same gate the backend
+  already enforces server-side) that restarts the game process in place.
+  Neither restart nor stop ever powers off the VM — that's the top-bar ⏻
+  (perm "power") in the Console hero.
 -->
 <script setup>
 import { reactive } from "vue";
@@ -15,9 +19,11 @@ import Field from "../components/ui/Field.vue";
 import { useConfirm } from "../components/ui/useConfirm.js";
 import { useToast } from "../components/ui/useToast.js";
 import { useServerStore } from "../stores/server.js";
+import { useSessionStore } from "../stores/session.js";
 
 const { t } = useI18n();
 const server = useServerStore();
+const session = useSessionStore();
 const toast = useToast();
 const { confirm } = useConfirm();
 
@@ -74,14 +80,25 @@ async function saveWorld() {
   await cmd("save", {});
 }
 
-async function shutdownServer() {
+async function stopServer() {
   const ok = await confirm({
-    message: t("commands.confirmShutdown", { seconds: shutdown.waittime }),
-    confirmLabel: t("commands.shutdown"),
+    message: t("commands.confirmStop", { seconds: shutdown.waittime }),
+    confirmLabel: t("commands.stopServer"),
     danger: true,
   });
   if (!ok) return;
   await cmd("shutdown", { waittime: shutdown.waittime, message: shutdown.message });
+}
+
+async function restartServer() {
+  const ok = await confirm({
+    message: t("commands.confirmRestart"),
+    confirmLabel: t("commands.restartServer"),
+    danger: true,
+  });
+  if (!ok) return;
+  const r = await apiPost("/api/restart", {}, { key: "commands" });
+  toast[r.ok ? "ok" : "error"](r.ok ? t("commands.restartOk") : r.error || t("commands.restartFailed"));
 }
 
 async function forceStop() {
@@ -103,7 +120,7 @@ async function forceStop() {
           <Field :label="t('commands.announcementMessage')" label-sr-only class="grow" v-slot="{ id }">
             <input :id="id" v-model="ann.message" :placeholder="t('commands.announcementMessage')" />
           </Field>
-          <Btn type="submit" icon="✦" :aria-label="t('commands.announce')" busy-key="commands" />
+          <Btn type="submit" busy-key="commands">{{ t("commands.announce") }}</Btn>
         </form>
       </Card>
 
@@ -116,31 +133,61 @@ async function forceStop() {
             <input :id="id" v-model="mod.message" :placeholder="t('commands.reasonPlaceholder')" />
           </Field>
         </div>
-        <div class="actions" style="margin-top: 10px">
-          <Btn icon="⏏" :aria-label="t('commands.kick')" busy-key="commands" @click="kick" />
-          <Btn variant="danger" icon="⊘" :aria-label="t('commands.ban')" busy-key="commands" @click="ban" />
-          <Btn variant="ghost" icon="↺" :aria-label="t('commands.unban')" busy-key="commands" @click="unban" />
+        <div class="actions equal" style="margin-top: 10px">
+          <Btn busy-key="commands" @click="kick">{{ t("commands.kick") }}</Btn>
+          <Btn variant="danger" busy-key="commands" @click="ban">{{ t("commands.ban") }}</Btn>
+          <Btn variant="ghost" busy-key="commands" @click="unban">{{ t("commands.unban") }}</Btn>
         </div>
       </Card>
 
       <Card :title="t('commands.worldTitle')">
         <div class="actions">
-          <Btn icon="↧" :aria-label="t('commands.saveWorld')" busy-key="commands" @click="saveWorld" />
+          <Btn busy-key="commands" @click="saveWorld">{{ t("commands.saveWorld") }}</Btn>
         </div>
       </Card>
 
-      <Card :title="t('commands.shutdownTitle')" :hint="t('commands.shutdownHint')">
-        <div class="fields">
-          <Field :label="t('commands.waitSeconds')" v-slot="{ id }">
-            <input :id="id" v-model.number="shutdown.waittime" type="number" min="0" style="max-width: 140px" />
-          </Field>
-          <Field :label="t('commands.messageLabel')" class="grow" v-slot="{ id }">
-            <input :id="id" v-model="shutdown.message" :placeholder="t('commands.restartingPlaceholder')" />
-          </Field>
-        </div>
-        <div class="actions" style="margin-top: 10px">
-          <Btn variant="danger" icon="⏻" :aria-label="t('commands.shutdown')" busy-key="commands" @click="shutdownServer" />
-          <Btn variant="danger" icon="■" :aria-label="t('commands.forceStop')" busy-key="commands" @click="forceStop" />
+      <Card :title="t('commands.powerTitle')" :hint="t('commands.powerHint')">
+        <div class="power-block">
+          <div class="power-row">
+            <div class="power-copy">
+              <p class="power-row-title">{{ t("commands.restartTitle") }}</p>
+              <p class="muted power-row-note">{{ t("commands.restartNote") }}</p>
+            </div>
+            <Btn
+              variant="danger"
+              busy-key="commands"
+              :disabled="!session.can('settings')"
+              @click="restartServer"
+            >{{ t("commands.restartServer") }}</Btn>
+          </div>
+
+          <div class="power-row power-row-stop">
+            <div class="fields">
+              <Field :label="t('commands.waitSeconds')" v-slot="{ id }">
+                <input :id="id" v-model.number="shutdown.waittime" type="number" min="0" style="max-width: 140px" />
+              </Field>
+              <Field :label="t('commands.messageLabel')" class="grow" v-slot="{ id }">
+                <input :id="id" v-model="shutdown.message" :placeholder="t('commands.restartingPlaceholder')" />
+              </Field>
+            </div>
+            <div class="power-copy">
+              <p class="power-row-title">{{ t("commands.stopTitle") }}</p>
+              <p class="muted power-row-note">{{ t("commands.stopNote") }}</p>
+            </div>
+            <div class="actions" style="margin-top: 6px">
+              <Btn
+                variant="danger"
+                busy-key="commands"
+                :disabled="!session.can('commands')"
+                @click="stopServer"
+              >{{ t("commands.stopServer") }}</Btn>
+              <Btn variant="ghost" busy-key="commands" :disabled="!session.can('commands')" @click="forceStop">{{
+                t("commands.forceStop")
+              }}</Btn>
+            </div>
+          </div>
+
+          <p class="muted power-vm-note">{{ t("commands.vmPowerNote") }}</p>
         </div>
       </Card>
     </template>
@@ -169,5 +216,39 @@ async function forceStop() {
 }
 .row .grow {
   flex: 1;
+}
+.power-block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.power-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.power-row-stop {
+  flex-direction: column;
+  align-items: stretch;
+  border-bottom: none;
+}
+.power-copy {
+  min-width: 0;
+}
+.power-row-title {
+  margin: 0;
+  font-weight: 600;
+}
+.power-row-note {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+.power-vm-note {
+  margin: 0;
+  font-size: 12px;
 }
 </style>

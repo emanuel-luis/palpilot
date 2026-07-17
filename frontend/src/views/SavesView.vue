@@ -281,7 +281,7 @@ const BACKUP_COLUMNS = [
           <Field :label="t('saves.nameLabel')" label-sr-only class="grow" v-slot="{ id }">
             <input :id="id" v-model="newName" :placeholder="t('saves.namePlaceholder')" />
           </Field>
-          <Btn type="submit" icon="＋" :aria-label="t('saves.create')" busy-key="saves" />
+          <Btn type="submit" busy-key="saves">{{ t("saves.create") }}</Btn>
         </form>
       </Card>
 
@@ -314,45 +314,40 @@ const BACKUP_COLUMNS = [
                   <td style="text-align: right">{{ fmtSize(s.size) }}</td>
                   <td>{{ fmtDate(s.last_backup) }}</td>
                   <td>
-                    <div class="actions end">
+                    <div class="actions end equal">
                       <Btn
                         v-if="!s.active"
                         size="sm"
                         variant="ok"
-                        icon="★"
                         :aria-label="`${t('saves.activate')}: ${s.name}`"
                         busy-key="saves"
                         @click="activateSlot(s)"
-                      />
+                      >{{ t("saves.activate") }}</Btn>
                       <Btn
                         size="sm"
                         variant="ghost"
-                        icon="↧"
                         :aria-label="`${t('saves.backup')}: ${s.name}`"
                         busy-key="saves"
                         :disabled="s.empty"
                         @click="backupSlot(s)"
-                      />
+                      >{{ t("saves.backup") }}</Btn>
                       <Btn
                         size="sm"
                         variant="ghost"
-                        icon="⧉"
                         :aria-label="`${t('saves.clone')}: ${s.name}`"
                         busy-key="saves"
                         @click="openClone(s)"
-                      />
+                      >{{ t("saves.clone") }}</Btn>
                       <Btn
                         size="sm"
                         variant="ghost"
-                        icon="✎"
                         :aria-label="`${t('saves.rename')}: ${s.name}`"
                         busy-key="saves"
                         @click="openRename(s)"
-                      />
+                      >{{ t("saves.rename") }}</Btn>
                       <Btn
                         size="sm"
                         variant="ghost"
-                        icon="›"
                         class="chevron-btn"
                         :class="{ open: ensureBackups(s.guid).open }"
                         :aria-label="
@@ -362,16 +357,15 @@ const BACKUP_COLUMNS = [
                         "
                         busy-key="saves-backups"
                         @click="toggleBackups(s)"
-                      />
+                      ><span class="chevron-glyph" aria-hidden="true">›</span>{{ t("saves.backups") }}</Btn>
                       <Btn
                         size="sm"
                         variant="danger"
-                        icon="✕"
                         :aria-label="`${t('common.delete')}: ${s.name}`"
                         busy-key="saves"
                         :disabled="s.active"
                         @click="deleteSlot(s)"
-                      />
+                      >{{ t("common.delete") }}</Btn>
                     </div>
                   </td>
                 </tr>
@@ -390,23 +384,21 @@ const BACKUP_COLUMNS = [
                       <template #cell-size="{ value }">{{ fmtSize(value) }}</template>
                       <template #cell-created="{ value }">{{ fmtDate(value) }}</template>
                       <template #cell-actions="{ row }">
-                        <div class="actions end">
+                        <div class="actions end equal">
                           <Btn
                             size="sm"
                             variant="ghost"
-                            icon="↺"
                             :aria-label="`${t('saves.restore')}: ${row.file}`"
                             busy-key="saves-backups"
                             @click="restoreBackup(s, row)"
-                          />
+                          >{{ t("saves.restore") }}</Btn>
                           <Btn
                             size="sm"
                             variant="ghost"
-                            icon="⧉"
                             :aria-label="`${t('saves.restoreAsNew')}: ${row.file}`"
                             busy-key="saves-backups"
                             @click="openRestoreAsNew(s, row)"
-                          />
+                          >{{ t("saves.restoreAsNew") }}</Btn>
                         </div>
                       </template>
                     </DataTable>
@@ -487,11 +479,11 @@ const BACKUP_COLUMNS = [
   font-size: 13px;
 }
 /* Show/hide-backups reuses the Section "expand ›" glyph, rotated open. */
-.chevron-btn :deep(.icon-glyph) {
+.chevron-glyph {
   display: inline-block;
   transition: transform 0.15s ease;
 }
-.chevron-btn.open :deep(.icon-glyph) {
+.chevron-btn.open .chevron-glyph {
   transform: rotate(90deg);
 }
 </style>

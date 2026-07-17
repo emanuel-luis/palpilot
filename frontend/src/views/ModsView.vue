@@ -191,7 +191,7 @@ async function installUe4ss() {
             <Field :label="t('mods.nameOptional')" label-sr-only v-slot="{ id }">
               <input :id="id" v-model="modUrlName" :placeholder="t('mods.nameOptional')" style="max-width: 200px" />
             </Field>
-            <Btn icon="↧" :aria-label="t('mods.download')" busy-key="mods" @click="installByUrl" />
+            <Btn busy-key="mods" @click="installByUrl">{{ t("mods.download") }}</Btn>
           </div>
         </div>
 
@@ -201,7 +201,7 @@ async function installUe4ss() {
             <Field :label="t('mods.chooseFile')" label-sr-only class="grow" v-slot="{ id }">
               <input :id="id" type="file" accept=".pak,.zip" @change="pickFile" />
             </Field>
-            <Btn icon="↥" :aria-label="t('mods.upload')" busy-key="mods" @click="uploadMod" />
+            <Btn busy-key="mods" @click="uploadMod">{{ t("mods.upload") }}</Btn>
           </div>
         </div>
       </Card>
@@ -232,35 +232,28 @@ async function installUe4ss() {
           <template #cell-installed_at="{ value }">{{ fmtDate(value) }}</template>
           <template #cell-size="{ value }">{{ fmtSize(value) }}</template>
           <template #cell-actions="{ row }">
-            <div class="actions end">
+            <div class="actions end equal">
               <Btn
                 size="sm"
                 :variant="row.enabled ? 'ghost' : 'ok'"
-                icon="⏻"
                 :aria-label="`${row.enabled ? t('mods.disable') : t('mods.enable')}: ${row.name}`"
                 busy-key="mods"
                 @click="toggleMod(row)"
-              />
+              >{{ row.enabled ? t("mods.disable") : t("mods.enable") }}</Btn>
               <Btn
                 size="sm"
                 variant="danger"
-                icon="✕"
                 :aria-label="`${t('mods.remove')}: ${row.name}`"
                 busy-key="mods"
                 @click="removeMod(row)"
-              />
+              >{{ t("mods.remove") }}</Btn>
             </div>
           </template>
         </DataTable>
         <div class="row end">
-          <Btn
-            variant="ghost"
-            icon="↻"
-            :aria-label="t('mods.restartToApply')"
-            busy-key="mods"
-            :disabled="!session.can('settings')"
-            @click="restartServer"
-          />
+          <Btn variant="ghost" busy-key="mods" :disabled="!session.can('settings')" @click="restartServer">
+            {{ t("mods.restartToApply") }}
+          </Btn>
         </div>
       </Card>
 
@@ -270,13 +263,9 @@ async function installUe4ss() {
             <input :id="id" v-model="ue4ssUrl" :disabled="!capabilities.ue4ss" placeholder="https://…" />
           </Field>
           <span :title="!capabilities.ue4ss ? t('mods.ue4ssNotProton') : ''">
-            <Btn
-              icon="⬡"
-              :aria-label="t('mods.ue4ssInstall')"
-              busy-key="ue4ss"
-              :disabled="!capabilities.ue4ss"
-              @click="installUe4ss"
-            />
+            <Btn busy-key="ue4ss" :disabled="!capabilities.ue4ss" @click="installUe4ss">
+              {{ t("mods.ue4ssInstall") }}
+            </Btn>
           </span>
         </div>
       </Card>
