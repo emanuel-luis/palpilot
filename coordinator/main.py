@@ -15,6 +15,20 @@ Permissions (per user):
   commands  run REST commands (announce/kick/ban/save/shutdown/...)
   users     manage panel users
 
+Auth (session tokens):
+  POST /api/login {username,password} verifies against the existing PBKDF2 users.json
+  record (and the existing per-IP throttle) and, on success, issues a compact
+  hand-rolled session token (no JWT dependency):
+    base64url(header).base64url(payload).hex(HMAC-SHA256("header.payload", INTERNAL_TOKEN))
+  payload = {u, perms, iat, exp, ver}; exp = iat + 12h. Every protected route accepts
+  `Authorization: Bearer <token>` (verified for signature + expiry + that payload.ver
+  still matches the user's current users.json "ver") OR HTTP Basic (kept for /api/login
+  callers that prefer Basic, and as break-glass). users.json records carry a "ver" int
+  (default 0 for legacy records); POST /api/logout-all bumps the caller's ver to
+  invalidate all outstanding tokens, and POST /api/account/password {old,new} re-hashes
+  at the current PBKDF2 count and also bumps ver. POST /api/logout is a client-side no-op
+  (200 OK) since tokens are stateless and just get dropped by the browser.
+
 Routing:
   Routes are declared in ROUTES as (method_spec, path_matcher, required_perm, handler)
   tuples so every route's permission gate lives right next to its path/method. A
@@ -43,6 +57,7 @@ Env vars (set by Terraform):
   IDLE_POLL_DEFAULT, IDLE_GRACE_DEFAULT  seed watchdog timeout
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -76,6 +91,9 @@ PERMS = ["view", "power", "config", "commands", "users"]
 # the legacy count until the user's next successful login re-hashes them.
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_ITERATIONS_LEGACY = 100_000
+
+# Session tokens: compact hand-rolled JWT-alike, signed with INTERNAL_TOKEN. No jwt dep.
+TOKEN_TTL_SECONDS = 12 * 3600
 
 # In-memory per-IP failed-login throttle. Best-effort only (resets per instance /
 # cold start on this serverless runtime), but cheap and closes casual brute-forcing.
@@ -134,6 +152,7 @@ def _new_user(password, perms, iterations=PBKDF2_ITERATIONS):
         "hash": _hash_pw(password, salt, iterations),
         "perms": perms,
         "iterations": iterations,
+        "ver": 0,
     }
 
 
@@ -159,6 +178,14 @@ def _login_throttled(ip):
     return len(hits) >= _THROTTLE_MAX_FAILURES
 
 
+def _throttle_retry_after(ip):
+    now = time.time()
+    hits = [t for t in _failed_logins.get(ip, []) if now - t < _THROTTLE_WINDOW_SECONDS]
+    if not hits:
+        return 0
+    return max(1, int(_THROTTLE_WINDOW_SECONDS - (now - min(hits))) + 1)
+
+
 def _note_failed_login(ip):
     _failed_logins.setdefault(ip, []).append(time.time())
 
@@ -172,20 +199,45 @@ def _rehash_user(username, password):
 
     Called after a successful login against a record stored with the legacy
     (lower) iteration count, so credentials migrate forward without a forced
-    password reset.
+    password reset. This is a transparent migration, not a security event, so
+    it must NOT bump "ver" (that would silently invalidate live sessions).
     """
     try:
         data = json.loads(json.dumps(_load_users()))
         rec = data.get("users", {}).get(username)
         if not rec:
             return
-        rec.update(_new_user(password, rec.get("perms", [])))
+        new_fields = _new_user(password, rec.get("perms", []))
+        new_fields["ver"] = rec.get("ver", 0)
+        rec.update(new_fields)
         _store(USERS_OBJECT, data)
     except Exception as e:  # noqa: BLE001
         print(f"password re-hash failed for user {username!r}: {e}")
 
 
-def _authenticate(request):
+def _check_password(username, password):
+    """Verify a username/password pair against users.json.
+
+    Returns the user record on success (None on failure). Side effect: migrates
+    a legacy (lower-iteration) record forward on a successful check. No throttle
+    bookkeeping here — callers own that (throttle policy differs slightly between
+    /api/login and Basic-Auth call sites, but both wrap this).
+    """
+    if not username:
+        return None
+    rec = _load_users().get("users", {}).get(username)
+    if not rec:
+        return None
+    iterations = rec.get("iterations", PBKDF2_ITERATIONS_LEGACY)
+    computed = _hash_pw(password or "", rec["salt"], iterations)
+    if not hmac.compare_digest(computed, rec["hash"]):
+        return None
+    if iterations < PBKDF2_ITERATIONS:
+        _rehash_user(username, password)
+    return rec
+
+
+def _authenticate_basic(request):
     a = request.authorization
     if not a or not a.username:
         return None
@@ -193,20 +245,83 @@ def _authenticate(request):
     if _login_throttled(ip):
         print(f"login throttled for ip={ip}")
         return None
-    rec = _load_users().get("users", {}).get(a.username)
-    if rec:
-        iterations = rec.get("iterations", PBKDF2_ITERATIONS_LEGACY)
-        computed = _hash_pw(a.password or "", rec["salt"], iterations)
-        valid = hmac.compare_digest(computed, rec["hash"])
-    else:
-        valid = False
-    if not valid:
+    rec = _check_password(a.username, a.password or "")
+    if not rec:
         _note_failed_login(ip)
         return None
     _clear_failed_login(ip)
-    if rec.get("iterations", PBKDF2_ITERATIONS_LEGACY) < PBKDF2_ITERATIONS:
-        _rehash_user(a.username, a.password)
     return {"name": a.username, "perms": rec.get("perms", [])}
+
+
+# ---------------------------------------------------------------------------
+# session tokens (hand-rolled compact JWT-alike; no jwt dependency)
+#   base64url(header) "." base64url(payload) "." hex(HMAC-SHA256(header.payload, key))
+#   payload: {u, perms, iat, exp, ver}
+# ---------------------------------------------------------------------------
+
+
+def _b64url_encode(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s):
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+def _sign(signing_input):
+    return hmac.new(INTERNAL_TOKEN.encode(), signing_input.encode(), hashlib.sha256).hexdigest()
+
+
+def _make_token(username, perms, ver):
+    now = int(time.time())
+    exp = now + TOKEN_TTL_SECONDS
+    header_b64 = _b64url_encode(json.dumps({"alg": "HS256", "typ": "PPT"}, separators=(",", ":")).encode())
+    payload = {"u": username, "perms": perms, "iat": now, "exp": exp, "ver": ver}
+    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    sig = _sign(f"{header_b64}.{payload_b64}")
+    return f"{header_b64}.{payload_b64}.{sig}", exp
+
+
+def _verify_token(token):
+    """Verify signature + expiry; return the decoded payload dict, or None."""
+    if not token or token.count(".") != 2:
+        return None
+    header_b64, payload_b64, sig_hex = token.split(".")
+    expected_sig = _sign(f"{header_b64}.{payload_b64}")
+    if not hmac.compare_digest(sig_hex, expected_sig):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(payload_b64))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if float(payload.get("exp", 0)) < time.time():
+        return None
+    return payload
+
+
+def _authenticate_bearer(token):
+    payload = _verify_token(token)
+    if not payload:
+        return None
+    username = payload.get("u")
+    rec = _load_users().get("users", {}).get(username)
+    if not rec:
+        return None
+    if payload.get("ver", 0) != rec.get("ver", 0):
+        return None  # token was issued before a logout-all / password change
+    return {"name": username, "perms": rec.get("perms", [])}
+
+
+def _authenticate(request):
+    """Resolve the acting user: prefer a Bearer session token, fall back to Basic
+    (kept for break-glass access and any client that prefers Basic directly)."""
+    auth_header = request.headers.get("Authorization", "") or ""
+    if auth_header.startswith("Bearer "):
+        return _authenticate_bearer(auth_header[len("Bearer "):].strip())
+    return _authenticate_basic(request)
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +447,69 @@ def _h_session(request, user, path, method):
     return _ok({"user": user["name"], "perms": user["perms"]})
 
 
+def _h_login(request):
+    """POST /api/login {username,password} -> {ok, token, user, perms, exp}.
+
+    Unauthenticated route (that's the point); handled before the auth gate in
+    the entrypoint. Shares the per-IP throttle + PBKDF2 check with Basic-Auth.
+    """
+    ip = _client_ip(request)
+    if _login_throttled(ip):
+        print(f"login throttled for ip={ip}")
+        return _json(
+            {"ok": False, "error": "too many attempts, try again later", "retry_after": _throttle_retry_after(ip)},
+            429,
+        )
+    body = request.get_json(silent=True) or {}
+    username = (body.get("username") or "").strip()
+    password = body.get("password") or ""
+    rec = _check_password(username, password) if username else None
+    if not rec:
+        _note_failed_login(ip)
+        return _err("invalid credentials", 401)
+    _clear_failed_login(ip)
+    perms = rec.get("perms", [])
+    ver = rec.get("ver", 0)
+    token, exp = _make_token(username, perms, ver)
+    return _ok({"token": token, "user": username, "perms": perms, "exp": exp})
+
+
+def _h_logout(request, user, path, method):
+    # Tokens are stateless; the client just drops it. Nothing to invalidate server-side.
+    return _ok()
+
+
+def _h_logout_all(request, user, path, method):
+    """Bump the caller's users.json "ver", invalidating every outstanding token."""
+    data = json.loads(json.dumps(_load_users()))
+    rec = data.get("users", {}).get(user["name"])
+    if not rec:
+        return _err("user not found", 404)
+    rec["ver"] = rec.get("ver", 0) + 1
+    _store(USERS_OBJECT, data)
+    return _ok({"ver": rec["ver"]})
+
+
+def _h_account_password(request, user, path, method):
+    """POST /api/account/password {old,new} -> re-hash at current PBKDF2 count, bump ver."""
+    body = request.get_json(silent=True) or {}
+    old = body.get("old") or ""
+    new = body.get("new") or ""
+    if not new or len(new) < 8:
+        return _err("new password must be at least 8 characters", 400)
+    if not _check_password(user["name"], old):
+        return _err("current password is incorrect", 401)
+    data = json.loads(json.dumps(_load_users()))
+    rec = data.get("users", {}).get(user["name"])
+    if not rec:
+        return _err("user not found", 404)
+    new_fields = _new_user(new, rec.get("perms", []))
+    new_fields["ver"] = rec.get("ver", 0) + 1  # bump: invalidate every outstanding token
+    rec.update(new_fields)
+    _store(USERS_OBJECT, data)
+    return _ok({"ver": rec["ver"]})
+
+
 def _h_overview(request, user, path, method):
     try:
         st = _vm_status()
@@ -422,6 +600,9 @@ def _users_path(path):
 
 ROUTES = [
     ("GET", _exact("/api/session"), None, _h_session),
+    ("POST", _exact("/api/logout"), None, _h_logout),
+    ("POST", _exact("/api/logout-all"), None, _h_logout_all),
+    ("POST", _exact("/api/account/password"), None, _h_account_password),
     ("GET", _exact("/api/overview"), "view", _h_overview),
     ("GET", _exact("/api/watchdog"), "view", _h_watchdog_get),
     ("POST", _exact("/api/watchdog"), "config", _h_watchdog_post),
@@ -466,6 +647,10 @@ def coordinator(request):
     if path == "/" and method == "GET":
         with open(INDEX_PATH, encoding="utf-8") as f:
             return (f.read(), 200, {"Content-Type": "text/html; charset=utf-8"})
+
+    # --- unauthenticated login endpoint: issues the session token ---
+    if path == "/api/login" and method == "POST":
+        return _h_login(request)
 
     # --- token-authed endpoints for the VM watchdog (no user login) ---
     tok = request.headers.get("X-Internal-Token") or ""
@@ -514,7 +699,9 @@ def _handle_users(request, method, path):
         if username in users:
             users[username]["perms"] = perms
             if password:
-                users[username] = {**users[username], **_new_user(password, perms)}
+                new_fields = _new_user(password, perms)
+                new_fields["ver"] = users[username].get("ver", 0) + 1  # bump, don't reset to 0
+                users[username] = {**users[username], **new_fields}
         else:
             if not password:
                 return _err("password required for new user", 400)

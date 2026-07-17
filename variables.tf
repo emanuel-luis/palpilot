@@ -118,3 +118,37 @@ variable "notification_channel_email" {
   type        = string
   default     = ""
 }
+
+#
+# --- Dual-mode server runtime (see docs/FRONTEND_V2_PLAN.md "Runtime dual-mode") ---
+#
+
+variable "runtime_mode" {
+  description = <<-EOT
+    Server runtime: "native" (default) or "proton" (EXPERIMENTAL, opt-in).
+
+    "native" reproduces today's behavior byte-for-byte: startup.sh installs
+    the Linux PalServer build via steamcmd and runs it directly under
+    systemd. This is the only mode that has ever been booted/validated.
+
+    "proton" makes startup.sh install GE-Proton and the WINDOWS PalServer
+    build instead (needed for UE4SS/RE-UE4SS script mods), and launches
+    PalServer.exe through Proton from the systemd unit. It is guarded
+    behind `[ "$RUNTIME_MODE" = "proton" ]` in startup.sh, has NOT been
+    booted/tested (reviewed for consistency only), wants a bigger
+    machine_type than native (see the commented option next to
+    google_compute_instance.palworld in main.tf), and -- like any
+    startup.sh/metadata change to this VM -- only takes effect after a
+    stop/apply/start cycle (this project's "recreate": the persistent data
+    disk survives, but connected players are disconnected). Treat flipping
+    this variable as a planned maintenance-window change, never a routine
+    `terraform apply`.
+  EOT
+  type        = string
+  default     = "native"
+
+  validation {
+    condition     = contains(["native", "proton"], var.runtime_mode)
+    error_message = "runtime_mode must be either \"native\" or \"proton\"."
+  }
+}
