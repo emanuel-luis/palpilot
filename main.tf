@@ -43,8 +43,42 @@ resource "google_compute_firewall" "palworld_panel_tcp" {
     ports    = [tostring(var.panel_port)]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  # RISK (finding C2): var.panel_allowed_cidrs defaults to 0.0.0.0/0 to
+  # preserve current behavior. This port serves plaintext HTTP on a
+  # root-owned process behind only a shared Basic-Auth credential (no
+  # per-user RBAC) -- see docs/MODERNIZATION_PLAN.md. Narrow this variable
+  # once the coordinator's signed-header RBAC propagation (H1) is in place.
+  source_ranges = var.panel_allowed_cidrs
 }
+
+
+#
+# Firewall SSH restrito (fecha o gap de tcp:22 aberto por padrão)
+#
+resource "google_compute_firewall" "palworld_ssh_restricted" {
+  name    = "palworld-ssh-restricted"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  # 35.235.240.0/20 is Google's fixed IAP TCP-forwarding range (SSH via
+  # `gcloud compute ssh --tunnel-through-iap`). var.ssh_admin_cidrs adds
+  # any break-glass admin CIDRs on top; empty by default.
+  source_ranges = concat(["35.235.240.0/20"], var.ssh_admin_cidrs)
+
+  target_tags = ["https-server"]
+}
+
+# NOTE: this rule only ever *adds* a restricted allow. The GCP "default"
+# auto-mode network historically ships its own implicit/legacy
+# `default-allow-ssh` rule open to 0.0.0.0/0, created outside this
+# Terraform config. That rule must be located and removed/tightened by the
+# operator directly (Class A, see MODERNIZATION_PLAN.md Phase 0) --
+# Terraform does not manage or import it here, so this module cannot
+# delete it for you.
 
 
 #
@@ -228,6 +262,17 @@ resource "google_compute_instance" "palworld" {
     idle-poll-seconds  = tostring(var.idle_poll_seconds)
     idle-grace-seconds = tostring(var.idle_grace_seconds)
 
+    # Secret Manager (Phase 4, opt-in). When enabled, startup.sh fetches
+    # panel-password/admin-password/coordinator-token from Secret Manager
+    # by these secret_ids instead of trusting the plaintext metadata values
+    # above. Off by default so existing deployments are unaffected; see
+    # var.enable_secret_manager. The plaintext metadata values above are
+    # still set either way for backward compatibility / rollback.
+    use-secret-manager       = tostring(var.enable_secret_manager)
+    secret-panel-password-id = try(google_secret_manager_secret.panel_password[0].secret_id, "")
+    secret-admin-password-id = try(google_secret_manager_secret.admin_password[0].secret_id, "")
+    secret-internal-token-id = try(google_secret_manager_secret.internal_token[0].secret_id, "")
+
   }
 
 
@@ -304,4 +349,81 @@ resource "google_storage_bucket_iam_member" "palworld_panel_read" {
 
   member = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
 
+}
+
+
+#
+# Secret Manager (Phase 4, M8/H1) -- opt-in via var.enable_secret_manager.
+# Moves panel_password/admin_password/internal_token out of instance
+# metadata (readable by anyone who can read instance metadata, e.g. via
+# the metadata server from inside the VM) into Secret Manager, with a
+# narrow accessor grant to the VM's own service account. Nothing here is
+# created, and startup.sh keeps reading metadata, until the operator flips
+# the flag and recreates the VM (Class D).
+#
+resource "google_secret_manager_secret" "panel_password" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = "palworld-panel-password"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "panel_password" {
+  count       = var.enable_secret_manager ? 1 : 0
+  secret      = google_secret_manager_secret.panel_password[0].id
+  secret_data = var.panel_password
+}
+
+resource "google_secret_manager_secret" "admin_password" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = "palworld-admin-password"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "admin_password" {
+  count       = var.enable_secret_manager ? 1 : 0
+  secret      = google_secret_manager_secret.admin_password[0].id
+  secret_data = var.admin_password
+}
+
+resource "google_secret_manager_secret" "internal_token" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = "palworld-internal-token"
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "internal_token" {
+  count       = var.enable_secret_manager ? 1 : 0
+  secret      = google_secret_manager_secret.internal_token[0].id
+  secret_data = var.internal_token
+}
+
+# VM service account may read (but not manage) the three secrets above.
+resource "google_secret_manager_secret_iam_member" "panel_password_accessor" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = google_secret_manager_secret.panel_password[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "admin_password_accessor" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = google_secret_manager_secret.admin_password[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "internal_token_accessor" {
+  count     = var.enable_secret_manager ? 1 : 0
+  secret_id = google_secret_manager_secret.internal_token[0].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_compute_instance.palworld.service_account[0].email}"
 }

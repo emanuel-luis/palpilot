@@ -1,422 +1,60 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Palworld Panel</title>
+<meta name="robots" content="noindex, nofollow">
+<title>Palworld Agent</title>
 <style>
   :root{
-    --bg:#0f1216; --panel:#171c22; --panel2:#1e252d; --border:#2a333d;
-    --text:#e6edf3; --muted:#8b97a4; --accent:#4aa3ff; --accent2:#2b6fb3;
-    --ok:#3fb950; --warn:#d29922; --danger:#f85149; --danger2:#b62324;
-    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --bg:#0f1216; --panel:#171c22; --border:#2a333d;
+    --text:#e6edf3; --muted:#8b97a4; --accent:#4aa3ff;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-    font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-  header{display:flex;align-items:center;gap:12px;padding:14px 20px;
-    background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10}
-  header h1{font-size:16px;margin:0;font-weight:600}
-  header .dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
-  header .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  header .dot.off{background:var(--danger)}
-  header .meta{color:var(--muted);font-size:12px}
-  header .spacer{flex:1}
-  nav{display:flex;gap:4px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--border)}
-  nav button{background:none;border:none;color:var(--muted);padding:12px 16px;cursor:pointer;
-    font-size:14px;border-bottom:2px solid transparent}
-  nav button.active{color:var(--text);border-bottom-color:var(--accent)}
-  main{max-width:960px;margin:0 auto;padding:20px}
-  .tab{display:none}.tab.active{display:block}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-    padding:16px 18px;margin-bottom:16px}
-  .card h2{margin:0 0 12px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
-  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
-  input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--border);
-    color:var(--text);border-radius:7px;padding:8px 10px;font:inherit}
-  textarea{font-family:var(--mono);font-size:12px;min-height:340px;resize:vertical;white-space:pre}
-  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .row.end{justify-content:flex-end}
-  button.btn{background:var(--accent2);border:1px solid var(--accent);color:#fff;
-    padding:8px 14px;border-radius:7px;cursor:pointer;font:inherit}
-  button.btn:hover{background:var(--accent)}
-  button.btn.ghost{background:transparent;border-color:var(--border);color:var(--text)}
-  button.btn.ghost:hover{border-color:var(--accent)}
-  button.btn.danger{background:var(--danger2);border-color:var(--danger)}
-  button.btn.danger:hover{background:var(--danger)}
-  button.btn:disabled{opacity:.5;cursor:default}
-  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px}
-  .kv .k{color:var(--muted)}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:8px;border-bottom:1px solid var(--border)}
-  th{color:var(--muted);font-weight:500}
-  td .mono{font-family:var(--mono);font-size:12px;color:var(--muted)}
-  details{margin-top:8px}summary{cursor:pointer;color:var(--muted);margin-bottom:8px}
-  details.section{margin:0 0 10px;border:1px solid var(--border);border-radius:9px;background:var(--panel2);overflow:hidden}
-  details.section>summary{list-style:none;margin:0;padding:12px 14px;color:var(--text);font-weight:600;
-    display:flex;align-items:center;gap:10px;user-select:none}
-  details.section>summary::-webkit-details-marker{display:none}
-  details.section>summary::before{content:"▸";color:var(--muted);transition:transform .15s}
-  details.section[open]>summary::before{transform:rotate(90deg)}
-  details.section>summary .count{margin-left:auto;color:var(--muted);font-weight:400;font-size:12px}
-  details.section>summary:hover{background:var(--panel)}
-  details.section .grid{padding:14px}
-  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-    background:var(--panel2);border:1px solid var(--border);border-radius:8px;
-    padding:10px 18px;opacity:0;transition:.25s;pointer-events:none;max-width:90vw}
-  .toast.show{opacity:1}
-  .toast.ok{border-color:var(--ok)}.toast.err{border-color:var(--danger)}
-  pre{background:var(--panel2);border:1px solid var(--border);border-radius:7px;
-    padding:12px;overflow:auto;font-size:12px;max-height:300px}
-  .muted{color:var(--muted)}
-  .metric{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px}
-  .metric .n{font-size:22px;font-weight:600}.metric .l{font-size:11px;color:var(--muted);text-transform:uppercase}
-  #login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100}
-  #login .box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:28px;width:320px;max-width:92vw}
-  #login h1{margin:0 0 4px;font-size:18px}
-  #login p{margin:0 0 18px;color:var(--muted);font-size:13px}
-  #login label{margin-top:12px}
-  #login .btn{width:100%;margin-top:18px;justify-content:center}
-  #login .err{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
-  #app{display:none}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:var(--bg);color:var(--text);
+    font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
+  .box{max-width:480px;background:var(--panel);border:1px solid var(--border);
+    border-radius:12px;padding:28px 32px}
+  h1{margin:0 0 12px;font-size:18px}
+  p{margin:0 0 12px;color:var(--muted)}
+  a{color:var(--accent)}
+  code{background:#000a;padding:2px 5px;border-radius:4px;font-size:13px}
 </style>
 </head>
 <body>
-<div id="login">
-  <form class="box" onsubmit="doLogin(event)">
-    <h1>Palworld Panel</h1>
-    <p>Entre com as credenciais do painel.</p>
-    <label>Usuário</label>
-    <input id="loginUser" autocomplete="username" autofocus>
-    <label>Senha</label>
-    <input id="loginPass" type="password" autocomplete="current-password">
-    <button class="btn" type="submit">Entrar</button>
-    <div class="err" id="loginErr"></div>
-  </form>
-</div>
+  <!--
+    This file is intentionally static: no JavaScript, no fetch/innerHTML,
+    no rendering of server or player data. It replaces the legacy admin
+    UI that used to be served directly from this VM (which had a stored
+    XSS via unescaped player names, no per-user RBAC of its own, and
+    talked to this agent over plaintext HTTP).
 
-<div id="app">
-<header>
-  <span class="dot" id="statusDot"></span>
-  <h1 id="serverName">Palworld Panel</h1>
-  <span class="meta" id="serverMeta"></span>
-  <span class="spacer"></span>
-  <button class="btn ghost" onclick="loadStatus()">↻ Status</button>
-  <button class="btn ghost" onclick="selfUpdate()" title="Puxa o código mais recente do bucket e reinicia o painel">⇩ Atualizar painel</button>
-  <button class="btn ghost" onclick="logout()">Sair</button>
-</header>
-<nav>
-  <button data-tab="status" class="active">Status</button>
-  <button data-tab="config">Configurações</button>
-  <button data-tab="commands">Comandos</button>
-</nav>
-
-<main>
-  <!-- STATUS -->
-  <section class="tab active" id="tab-status">
-    <div class="card">
-      <h2>Métricas</h2>
-      <div class="grid" id="metrics"><span class="muted">Carregando…</span></div>
-    </div>
-    <div class="card">
-      <h2>Informações do servidor</h2>
-      <div class="kv" id="info"></div>
-    </div>
-    <div class="card">
-      <h2>Jogadores online</h2>
-      <table><thead><tr><th>Nome</th><th>Level</th><th>Ping</th><th>PlayerId / UserId</th></tr></thead>
-      <tbody id="players"><tr><td colspan="4" class="muted">Carregando…</td></tr></tbody></table>
-    </div>
-  </section>
-
-  <!-- CONFIG -->
-  <section class="tab" id="tab-config">
-    <div class="card">
-      <h2>Configurações do servidor</h2>
-      <input id="cfgSearch" placeholder="Filtrar configurações…" oninput="renderCfg()" style="margin-bottom:12px">
-      <div id="cfgForm"><span class="muted">Carregando…</span></div>
-      <div class="row end" style="margin-top:14px">
-        <label class="row" style="margin:0"><input type="checkbox" id="cfgRestart" style="width:auto"> reiniciar após salvar</label>
-        <button class="btn ghost" onclick="loadConfig()">Recarregar</button>
-        <button class="btn" onclick="saveForm()">Salvar campos</button>
-      </div>
-      <details>
-        <summary>Editor bruto do PalWorldSettings.ini</summary>
-        <textarea id="cfgRaw" spellcheck="false"></textarea>
-        <div class="row end" style="margin-top:10px">
-          <button class="btn" onclick="saveRaw()">Salvar arquivo bruto</button>
-        </div>
-        <p class="muted" id="cfgPath"></p>
-      </details>
-    </div>
-  </section>
-
-  <!-- COMMANDS -->
-  <section class="tab" id="tab-commands">
-    <div class="card">
-      <h2>Anúncio</h2>
-      <div class="row"><input id="annMsg" placeholder="Mensagem para todos os jogadores">
-      <button class="btn" onclick="cmd('announce',{message:val('annMsg')})">Anunciar</button></div>
-    </div>
-    <div class="card">
-      <h2>Moderação</h2>
-      <label>UserId (steam_XXXX…)</label>
-      <input id="modUser" placeholder="steam_0123456789">
-      <label style="margin-top:8px">Mensagem (kick/ban)</label>
-      <input id="modMsg" placeholder="Motivo">
-      <div class="row" style="margin-top:10px">
-        <button class="btn" onclick="cmd('kick',{userid:val('modUser'),message:val('modMsg')})">Kick</button>
-        <button class="btn danger" onclick="cmd('ban',{userid:val('modUser'),message:val('modMsg')})">Ban</button>
-        <button class="btn ghost" onclick="cmd('unban',{userid:val('modUser')})">Unban</button>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Mundo</h2>
-      <div class="row"><button class="btn" onclick="cmd('save',{})">Salvar mundo</button></div>
-    </div>
-    <div class="card">
-      <h2>Desligar</h2>
-      <div class="row">
-        <div><label>Espera (s)</label><input id="shWait" type="number" value="30" style="width:100px"></div>
-        <div style="flex:1"><label>Mensagem</label><input id="shMsg" placeholder="Servidor reiniciando…"></div>
-      </div>
-      <div class="row" style="margin-top:10px">
-        <button class="btn danger" onclick="cmd('shutdown',{waittime:+val('shWait'),message:val('shMsg')})">Shutdown (gracioso)</button>
-        <button class="btn danger" onclick="if(confirm('Forçar parada imediata?'))cmd('stop',{})">Force Stop</button>
-      </div>
-    </div>
-  </section>
-</main>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const $=s=>document.querySelector(s);
-const val=id=>$('#'+id).value.trim();
-function toast(msg,ok=true){const t=$('#toast');t.textContent=msg;
-  t.className='toast show '+(ok?'ok':'err');setTimeout(()=>t.className='toast',2600);}
-
-// ---- auth (HTTP Basic, stored client-side) ----
-const AUTH_KEY='pw_auth';
-let AUTH=localStorage.getItem(AUTH_KEY)||'';   // base64 "user:pass"
-function showLogin(){$('#login').style.display='flex';$('#app').style.display='none';}
-function showApp(){$('#login').style.display='none';$('#app').style.display='block';}
-function logout(){AUTH='';localStorage.removeItem(AUTH_KEY);showLogin();}
-async function doLogin(e){
-  e.preventDefault();
-  const u=val('loginUser'),p=$('#loginPass').value;
-  const token=btoa(u+':'+p);
-  const r=await fetch('/api/session',{headers:{Authorization:'Basic '+token}});
-  if(r.ok){AUTH=token;localStorage.setItem(AUTH_KEY,token);$('#loginErr').textContent='';start();}
-  else{$('#loginErr').textContent='Credenciais inválidas';}
-}
-async function selfUpdate(){
-  if(!confirm('Puxar o código mais recente do bucket e reiniciar o painel?'))return;
-  const r=await api('POST','/api/self-update',{});
-  if(r.ok){toast('Atualizando… recarregando em 3s');setTimeout(()=>location.reload(),3000);}
-  else toast('Falha no update: '+(r.data.detail||r.status),false);
-}
-
-// tabs
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  b.classList.add('active');$('#tab-'+b.dataset.tab).classList.add('active');
-  if(b.dataset.tab==='config')loadConfig();
-});
-
-async function api(method,path,body){
-  const opt={method,headers:{}};
-  if(AUTH)opt.headers['Authorization']='Basic '+AUTH;
-  if(body!==undefined){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
-  const r=await fetch(path,opt);
-  let data;try{data=await r.json();}catch{data={};}
-  if(r.status===401){logout();}
-  return {ok:r.ok,status:r.status,data};
-}
-
-// ---- status ----
-async function loadStatus(){
-  const m=await api('GET','/api/rest/metrics');
-  const dot=$('#statusDot');
-  if(m.ok){dot.className='dot on';renderMetrics(m.data);}
-  else{dot.className='dot off';$('#metrics').innerHTML='<span class="muted">REST API indisponível ('+m.status+')</span>';}
-  const info=await api('GET','/api/rest/info');
-  if(info.ok){
-    $('#serverName').textContent=info.data.servername||'Palworld Panel';
-    $('#serverMeta').textContent=info.data.version||'';
-    $('#info').innerHTML=Object.entries(info.data).map(([k,v])=>
-      `<span class="k">${k}</span><span>${v}</span>`).join('');
-  }
-  const p=await api('GET','/api/rest/players');
-  const tb=$('#players');
-  if(p.ok&&p.data.players){
-    tb.innerHTML=p.data.players.length? p.data.players.map(pl=>
-      `<tr><td>${pl.name??''}</td><td>${pl.level??''}</td><td>${pl.ping!=null?Math.round(pl.ping):''}</td>
-       <td class="mono">${pl.playerId??''}<br>${pl.userId??''}</td></tr>`).join('')
-      :'<tr><td colspan="4" class="muted">Ninguém online</td></tr>';
-  }else tb.innerHTML='<tr><td colspan="4" class="muted">—</td></tr>';
-}
-function renderMetrics(d){
-  const cells=[['FPS','serverfps'],['Jogadores','currentplayernum'],['Máx','maxplayernum'],
-    ['Uptime (s)','uptime'],['Frametime','serverframetime'],['Dias','days']];
-  $('#metrics').innerHTML=cells.filter(([_,k])=>d[k]!=null).map(([l,k])=>
-    `<div class="metric"><div class="n">${d[k]}</div><div class="l">${l}</div></div>`).join('')
-    ||'<span class="muted">sem métricas</span>';
-}
-
-// ---- config (schema-driven, populated from live server defaults) ----
-const ENUMS={
-  Difficulty:['None','Casual','Normal','Hard'],
-  DeathPenalty:['None','Item','ItemAndEquipment','All'],
-  LogFormatType:['Text','Json'],
-};
-const SECRET_KEYS=['AdminPassword','ServerPassword'];
-let CFG_MODEL={};   // key -> {value, type}
-let CFG_ORIG={};    // original values, for change diff
-
-async function loadConfig(){
-  const [set,cfg]=await Promise.all([
-    api('GET','/api/rest/settings'),
-    api('GET','/api/config'),
-  ]);
-  const eff=set.ok?set.data:{};
-  const iniOpts=cfg.ok?(cfg.data.options||{}):{};
-  $('#cfgRaw').value=cfg.ok?(cfg.data.raw||''):'';
-  $('#cfgPath').textContent=cfg.ok?(cfg.data.path||''):'';
-  if(!set.ok){
-    $('#cfgForm').innerHTML='<span class="muted">Servidor REST indisponível — use o editor bruto abaixo.</span>';
-    return;
-  }
-  const model={};
-  for(const [k,v] of Object.entries(eff)){
-    if(Array.isArray(v))continue;               // arrays: via editor bruto
-    model[k]={value:v,type:typeof v};
-  }
-  // segredos não vêm do /settings; puxa do .ini
-  SECRET_KEYS.forEach(k=>{ if(!(k in model))model[k]={value:iniOpts[k]??'',type:'string'}; });
-  CFG_MODEL=model;
-  CFG_ORIG=Object.fromEntries(Object.entries(model).map(([k,o])=>[k,o.value]));
-  renderCfg();
-}
-
-function humanize(k){
-  return k.replace(/^b(?=[A-Z])/,'').replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/_/g,' ').trim();
-}
-
-// Seções (ordem importa: primeira que casar leva a chave). Resto -> "Outros".
-const SERVER_KEYS=new Set(['ServerName','ServerDescription','ServerPlayerMaxNum','CoopPlayerMaxNum',
-  'PublicPort','PublicIP','Region','bUseAuth','BanListURL','bAllowClientMod','bShowPlayerList',
-  'ChatPostLimitPerMinute','bIsMultiplay','ServerPassword','AdminPassword','CrossplayPlatforms',
-  'LogFormatType','bIsShowJoinLeftMessage','ServerReplicatePawnCullDistance']);
-const WORLD_KEYS=new Set(['Difficulty','RandomizerType','RandomizerSeed','bIsRandomizerPalLevelRandom',
-  'DayTimeSpeedRate','NightTimeSpeedRate','DeathPenalty','bHardcore','bPalLost',
-  'bCharacterRecreateInHardcore','autoSaveSpan','bIsUseBackupSaveData','SupplyDropSpan',
-  'EnablePredatorBossPal','bEnableInvaderEnemy','bActiveUNKO']);
-const SECTIONS=[
-  ['Servidor & Rede',   k=>SERVER_KEYS.has(k)],
-  ['API & RCON',        k=>/^REST|^RCON/.test(k)],
-  ['Voice Chat',        k=>/VoiceChat/i.test(k)],
-  ['PvP',               k=>/pvp/i.test(k)||k==='bEnablePlayerToPlayerDamage'||k==='bEnableFriendlyFire'],
-  ['Guild & Base',      k=>/Guild|BaseCamp|Build|AutoTransferMaster/.test(k)],
-  ['Pals',              k=>/^Pal/.test(k)],
-  ['Jogador',           k=>/Player|Respawn|Enhance|FastTravel|AimAssist|StartLocation|ExistPlayerAfterLogout|NonLoginPenalty/.test(k)],
-  ['Itens & Coleta',    k=>/Item|Drop|Collection|Palbox|Technology/.test(k)],
-  ['Mundo & Dificuldade',k=>WORLD_KEYS.has(k)],
-  ['Taxas',             k=>/Rate|Multiplier|Speed/.test(k)],
-  ['Outros',            k=>true],
-];
-const OPEN=new Set();               // seções abertas (estado preservado)
-function toggleSection(el,title){ if(el.open)OPEN.add(title); else OPEN.delete(title); }
-
-function fieldHtml(k){
-  const o=CFG_MODEL[k];
-  const name=`${humanize(k)}<br><span class="muted" style="font-size:10px">${k}</span>`;
-  if(o.type==='boolean'){
-    return `<label class="row" style="gap:8px;align-items:flex-start">
-      <input type="checkbox" data-key="${k}" ${o.value?'checked':''} style="width:auto;margin-top:2px">
-      <span>${name}</span></label>`;
-  }
-  let field;
-  if(o.type==='number'){
-    field=`<input type="number" step="any" data-key="${k}" value="${o.value}">`;
-  } else if(ENUMS[k]){
-    field=`<select data-key="${k}">`+ENUMS[k].map(opt=>
-      `<option ${opt===o.value?'selected':''}>${opt}</option>`).join('')+`</select>`;
-  } else {
-    const type=SECRET_KEYS.includes(k)?'password':'text';
-    field=`<input type="${type}" data-key="${k}" value="${String(o.value).replace(/"/g,'&quot;')}">`;
-  }
-  return `<div><label>${name}</label>${field}</div>`;
-}
-
-function renderCfg(){
-  const q=(val('cfgSearch')||'').toLowerCase();
-  const match=k=>!q||k.toLowerCase().includes(q)||humanize(k).toLowerCase().includes(q);
-  const keys=Object.keys(CFG_MODEL).sort();
-  const used=new Set();
-  let out='';
-  for(const [title,test] of SECTIONS){
-    const inSec=keys.filter(k=>!used.has(k)&&test(k));
-    inSec.forEach(k=>used.add(k));
-    const shown=inSec.filter(match);
-    if(shown.length===0)continue;
-    // aberto se: filtro ativo (auto-expande matches) ou estado guardado
-    const open=(q&&shown.length)||OPEN.has(title)?'open':'';
-    out+=`<details class="section" ${open} ontoggle="toggleSection(this,'${title.replace(/'/g,"\\'")}')">
-      <summary>${title}<span class="count">${shown.length}${q?'/'+inSec.length:''}</span></summary>
-      <div class="grid">${shown.map(fieldHtml).join('')}</div></details>`;
-  }
-  $('#cfgForm').innerHTML=out||'<span class="muted">Nenhuma configuração corresponde ao filtro.</span>';
-}
-
-async function saveForm(){
-  const changed={};
-  document.querySelectorAll('#cfgForm [data-key]').forEach(el=>{
-    const k=el.dataset.key; let v;
-    if(el.type==='checkbox')v=el.checked;
-    else if(el.type==='number')v=el.value===''?CFG_ORIG[k]:Number(el.value);
-    else v=el.value;
-    if(v!==CFG_ORIG[k])changed[k]=v;
-  });
-  const n=Object.keys(changed).length;
-  if(n===0){toast('Nada mudou');return;}
-  const restart=$('#cfgRestart').checked;
-  const r=await api('POST','/api/config?restart='+restart,{options:changed});
-  if(r.ok){toast(`Salvo (${n} campo${n>1?'s':''})`+(restart?' + reiniciando':''));loadConfig();}
-  else toast('Erro ao salvar',false);
-}
-async function saveRaw(){
-  const restart=$('#cfgRestart').checked;
-  const r=await api('POST','/api/config?restart='+restart,{raw:$('#cfgRaw').value});
-  if(r.ok)toast(restart?'Salvo e reiniciando':'Salvo');else toast('Erro ao salvar',false);
-}
-
-// ---- commands ----
-async function cmd(ep,body){
-  const r=await api('POST','/api/rest/'+ep,body);
-  if(r.ok)toast('OK: '+ep);
-  else toast('Falha ('+r.status+'): '+(r.data.error||JSON.stringify(r.data)),false);
-  if(['kick','ban','unban','shutdown','stop'].includes(ep))setTimeout(loadStatus,1200);
-}
-
-let statusTimer=null;
-function start(){
-  showApp();
-  loadStatus();
-  if(!statusTimer)statusTimer=setInterval(loadStatus,15000);
-}
-// boot: validate stored creds, else show login
-(async()=>{
-  if(AUTH){
-    const r=await fetch('/api/session',{headers:{Authorization:'Basic '+AUTH}});
-    if(r.ok){start();return;}
-  }
-  showLogin();
-})();
-</script>
+    Operator note: this file is hot-deployed via `gsutil cp` to the panel
+    bucket (see main.tf / startup.sh) — editing it does NOT require a
+    Terraform apply or VM recreate. If you want a working link below,
+    replace the placeholder href with your coordinator's HTTPS URL
+    (Cloud Function URL from `terraform output`, or your own domain if
+    you front it with one).
+  -->
+  <div class="box">
+    <h1>Palworld internal agent</h1>
+    <p>
+      This is the internal VM-side agent for the Palworld server. It has
+      been retired as an admin interface and no longer serves a login
+      page or renders any server/player data.
+    </p>
+    <p>
+      Manage the server from the <strong>Coordinator</strong> dashboard
+      instead — the same interface handles start/stop, config, saves,
+      mods, and per-user permissions with proper access control.
+    </p>
+    <p>
+      <a href="#" onclick="return false" title="Replace with your coordinator URL">
+        Coordinator dashboard
+      </a>
+      <br><span style="font-size:12px">(ask your admin, or see <code>terraform output</code>, for the exact address)</span>
+    </p>
+  </div>
 </body>
 </html>

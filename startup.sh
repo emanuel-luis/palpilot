@@ -114,13 +114,30 @@ mkdir -p "$PANEL_DIR"
 PANEL_BUCKET="$(meta panel-bucket)"
 PANEL_PORT="$(meta panel-port)"
 PANEL_USER="$(meta panel-user)"
-PANEL_PASSWORD="$(meta panel-password)"
-ADMIN_PASSWORD="$(meta admin-password)"
 REST_API_PORT="$(meta rest-api-port)"
 COORDINATOR_URL="$(meta coordinator-url)"
-INTERNAL_TOKEN="$(meta coordinator-token)"
 IDLE_POLL_SECONDS="$(meta idle-poll-seconds)"
 IDLE_GRACE_SECONDS="$(meta idle-grace-seconds)"
+
+# Secrets: panel-password / admin-password / coordinator-token.
+# Phase 4 (opt-in, var.enable_secret_manager): read from Secret Manager
+# instead of trusting the plaintext instance-metadata copies. Falls back
+# to metadata automatically if the flag is unset/false, so this stays
+# backward compatible with existing deployments.
+USE_SECRET_MANAGER="$(meta use-secret-manager)"
+if [ "$USE_SECRET_MANAGER" = "true" ]; then
+    echo "Secret Manager enabled: fetching panel/admin/coordinator secrets"
+    SECRET_PANEL_PW_ID="$(meta secret-panel-password-id)"
+    SECRET_ADMIN_PW_ID="$(meta secret-admin-password-id)"
+    SECRET_TOKEN_ID="$(meta secret-internal-token-id)"
+    PANEL_PASSWORD="$(gcloud secrets versions access latest --secret="$SECRET_PANEL_PW_ID")"
+    ADMIN_PASSWORD="$(gcloud secrets versions access latest --secret="$SECRET_ADMIN_PW_ID")"
+    INTERNAL_TOKEN="$(gcloud secrets versions access latest --secret="$SECRET_TOKEN_ID")"
+else
+    PANEL_PASSWORD="$(meta panel-password)"
+    ADMIN_PASSWORD="$(meta admin-password)"
+    INTERNAL_TOKEN="$(meta coordinator-token)"
+fi
 
 INI_PATH="/home/steam/Steam/Pal/Saved/Config/LinuxServer/PalWorldSettings.ini"
 
@@ -147,6 +164,11 @@ if [ ! -x "$PANEL_DIR/venv/bin/python" ]; then
     "$PANEL_DIR/venv/bin/pip" install --upgrade pip
     "$PANEL_DIR/venv/bin/pip" install fastapi uvicorn
 fi
+
+# palworld-panel/palworld-watchdog run as the non-root "steam" user (see
+# systemd units below); give it ownership of its own directory (self-update
+# rewrites panel.py in place) and the venv.
+chown -R steam:steam "$PANEL_DIR"
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +198,10 @@ Description=Palworld Admin Panel
 After=network.target palworld.service
 
 [Service]
-User=root
+# De-rooted (M8): only chown-to-self (no-op privilege-wise) and the
+# systemctl calls below need elevation; those go through the narrow
+# sudoers grant installed further down, not through running as root.
+User=steam
 WorkingDirectory=$PANEL_DIR
 Environment=PANEL_PORT=$PANEL_PORT
 Environment=PANEL_USER=$PANEL_USER
@@ -189,6 +214,7 @@ Environment=STEAM_USER=steam
 Environment=INDEX_PATH=$PANEL_DIR/index.html
 Environment=PANEL_BUCKET=$PANEL_BUCKET
 Environment=PANEL_DIR=$PANEL_DIR
+Environment=INTERNAL_TOKEN=$INTERNAL_TOKEN
 ExecStart=$PANEL_DIR/venv/bin/python $PANEL_DIR/panel.py serve
 Restart=always
 RestartSec=10
@@ -203,7 +229,9 @@ Description=Palworld Idle Watchdog (auto power-off when empty)
 After=network.target palworld.service
 
 [Service]
-User=root
+# De-rooted (L4): the watchdog only makes outbound HTTP calls (local REST
+# API + coordinator); it never needed root.
+User=steam
 WorkingDirectory=$PANEL_DIR
 Environment=ADMIN_PASSWORD=$ADMIN_PASSWORD
 Environment=REST_HOST=127.0.0.1
@@ -219,6 +247,31 @@ RestartSec=15
 [Install]
 WantedBy=multi-user.target
 EOF
+
+
+# ---------------------------------------------------------------------------
+# sudoers drop-in (M8/L4): panel.py (now running as "steam") calls
+# `systemctl restart/stop/start` on the game + its own units (config-apply
+# restart, shutdown command, self-update restart). Grant exactly those
+# commands, NOPASSWD, and nothing else -- no general root shell.
+# ---------------------------------------------------------------------------
+echo "Installing sudoers drop-in for steam (systemctl control only)"
+cat >/etc/sudoers.d/palworld-panel <<'EOF'
+Cmnd_Alias PALWORLD_CTL = \
+    /usr/bin/systemctl start palworld, \
+    /usr/bin/systemctl stop palworld, \
+    /usr/bin/systemctl restart palworld, \
+    /usr/bin/systemctl start palworld-panel, \
+    /usr/bin/systemctl stop palworld-panel, \
+    /usr/bin/systemctl restart palworld-panel, \
+    /usr/bin/systemctl start palworld-watchdog, \
+    /usr/bin/systemctl stop palworld-watchdog, \
+    /usr/bin/systemctl restart palworld-watchdog
+
+steam ALL=(root) NOPASSWD: PALWORLD_CTL
+EOF
+chmod 0440 /etc/sudoers.d/palworld-panel
+visudo -cf /etc/sudoers.d/palworld-panel
 
 systemctl daemon-reload
 systemctl enable palworld palworld-panel palworld-watchdog
