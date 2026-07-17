@@ -176,6 +176,17 @@ resource "google_compute_instance" "palworld" {
   name         = "palworld-tf-vm"
   machine_type = "e2-standard-4"
   # machine_type = "e2-standard-8"
+  #
+  # var.runtime_mode = "proton" (EXPERIMENTAL, see variables.tf and
+  # docs/FRONTEND_V2_PLAN.md) runs the Windows PalServer build through
+  # GE-Proton, which is heavier (Wine/DXVK translation overhead) than the
+  # native Linux build. If/when you opt into proton for real, bump this to
+  # a bigger machine_type first, e.g.:
+  #   machine_type = "e2-standard-8"
+  # `allow_stopping_for_update = true` below lets Terraform resize in
+  # place (stop -> update -> start; the persistent data disk survives) --
+  # it is NOT a delete+recreate, but it still disconnects players, so do
+  # it in the same maintenance window as flipping runtime_mode.
   zone = var.zone
 
   # Permite trocar machine_type sem recriar (para/liga a VM, mantém discos).
@@ -255,6 +266,17 @@ resource "google_compute_instance" "palworld" {
     panel-password = var.panel_password
     admin-password = var.admin_password
     rest-api-port  = tostring(var.rest_api_port)
+
+    # Dual-mode server runtime (opt-in, see var.runtime_mode in
+    # variables.tf and docs/FRONTEND_V2_PLAN.md "Runtime dual-mode").
+    # Default "native" reproduces today's behavior unchanged. startup.sh
+    # reads this and guards every proton-specific step behind
+    # `[ "$RUNTIME_MODE" = "proton" ]`; it also exports it as
+    # RUNTIME_MODE= in the palworld-panel.service Environment so panel.py
+    # can be capability-aware (e.g. gate UE4SS mod installs). Changing this
+    # value only takes effect on the VM's next stop/apply/start cycle, same
+    # as any other startup.sh/metadata edit -- plan a maintenance window.
+    runtime-mode = var.runtime_mode
 
     # Coordinator (serverless) + idle watchdog config
     coordinator-url    = google_cloudfunctions2_function.coordinator.url

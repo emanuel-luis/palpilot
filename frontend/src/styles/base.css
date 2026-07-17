@@ -1,0 +1,168 @@
+/* Global design tokens + resets, loaded once from main.js. Component styles
+   are otherwise scoped inside their own SFCs — this file only holds things
+   every component needs to agree on: color tokens, typography, focus rings.
+
+   Theming: dark is the default look; `prefers-color-scheme: light` flips it
+   automatically, and ThemeToggle.vue stamps data-theme="light|dark" on <html>
+   to let a user override that either direction — the explicit attribute
+   always wins over the media query. */
+
+:root {
+  --bg: #0f1216;
+  --panel: #171c22;
+  --panel-2: #1e252d;
+  --border: #2a333d;
+  --text: #e6edf3;
+  --muted: #8b97a4;
+  --accent: #4aa3ff;
+  --accent-2: #2b6fb3;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+  --danger-2: #b62324;
+  --focus: #4aa3ff;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 10px;
+  --radius-sm: 7px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f7f9;
+    --panel: #ffffff;
+    --panel-2: #eef1f4;
+    --border: #d7dce1;
+    --text: #1b232c;
+    --muted: #5b6672;
+    --accent: #1a73c7;
+    --accent-2: #155a9e;
+    --ok: #1f7a34;
+    --warn: #946a06;
+    --danger: #c62828;
+    --danger-2: #a31515;
+    --focus: #1a73c7;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1216;
+  --panel: #171c22;
+  --panel-2: #1e252d;
+  --border: #2a333d;
+  --text: #e6edf3;
+  --muted: #8b97a4;
+  --accent: #4aa3ff;
+  --accent-2: #2b6fb3;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+  --danger-2: #b62324;
+  --focus: #4aa3ff;
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f7f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f4;
+  --border: #d7dce1;
+  --text: #1b232c;
+  --muted: #5b6672;
+  --accent: #1a73c7;
+  --accent-2: #155a9e;
+  --ok: #1f7a34;
+  --warn: #946a06;
+  --danger: #c62828;
+  --danger-2: #a31515;
+  --focus: #1a73c7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* Any wide content (tables, raw editors) must scroll inside itself, never
+   the page — used by DataTable.vue and any view with a wide grid/table. */
+.scroll-x {
+  overflow-x: auto;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+button {
+  cursor: pointer;
+}

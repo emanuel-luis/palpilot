@@ -67,37 +67,123 @@ chown -R steam:steam /home/steam
 
 
 # ---------------------------------------------------------------------------
+# Runtime mode (opt-in dual-mode; see var.runtime_mode in variables.tf and
+# docs/FRONTEND_V2_PLAN.md "Runtime dual-mode"). Read early because it picks
+# which Palworld build (native Linux vs. Windows+Proton) gets installed
+# below. "native" is the default and reproduces today's behavior byte-for-
+# byte -- nothing under a `[ "$RUNTIME_MODE" = "proton" ]` guard anywhere in
+# this script ever runs unless var.runtime_mode is explicitly "proton".
+# META/meta() are defined here (rather than only in the panel/config section
+# further down, which still reuses them) so they're available this early.
+# ---------------------------------------------------------------------------
+META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
+meta() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
+
+RUNTIME_MODE="$(meta runtime-mode)"
+RUNTIME_MODE="${RUNTIME_MODE:-native}"
+echo "Runtime mode: $RUNTIME_MODE"
+
+
+# ---------------------------------------------------------------------------
 # Palworld (installed on the PERSISTENT data disk -> survives boot-disk change)
 # ---------------------------------------------------------------------------
-PALSERVER_SH="/home/steam/Steam/PalServer.sh"
+if [ "$RUNTIME_MODE" = "native" ]; then
+    # --- native (default): EXACTLY current behavior, unaltered ------------
+    PALSERVER_SH="/home/steam/Steam/PalServer.sh"
 
-echo "Installing/validating Palworld"
-if [ -f "$PALSERVER_SH" ]; then
-    echo "PalServer already present on data disk; skipping steamcmd download"
+    echo "Installing/validating Palworld"
+    if [ -f "$PALSERVER_SH" ]; then
+        echo "PalServer already present on data disk; skipping steamcmd download"
+    else
+        # First run self-updates and can fail with "Missing configuration"; retry.
+        for attempt in 1 2 3 4 5; do
+            echo "steamcmd attempt ${attempt}"
+            runuser -u steam -- /usr/games/steamcmd \
+                +force_install_dir /home/steam/Steam \
+                +login anonymous \
+                +app_update 2394010 validate \
+                +quit || true
+            if [ -f "$PALSERVER_SH" ]; then
+                echo "PalServer installed"
+                break
+            fi
+            echo "PalServer.sh not found yet, retrying..."
+            sleep 5
+        done
+    fi
+
+
+    echo "Linking steamclient.so (required by PalServer)"
+    runuser -u steam -- mkdir -p /home/steam/.steam/sdk64
+    ln -sf /home/steam/Steam/linux64/steamclient.so \
+        /home/steam/.steam/sdk64/steamclient.so
+    chown -h steam:steam /home/steam/.steam/sdk64/steamclient.so
+
 else
-    # First run self-updates and can fail with "Missing configuration"; retry.
-    for attempt in 1 2 3 4 5; do
-        echo "steamcmd attempt ${attempt}"
-        runuser -u steam -- /usr/games/steamcmd \
-            +force_install_dir /home/steam/Steam \
-            +login anonymous \
-            +app_update 2394010 validate \
-            +quit || true
-        if [ -f "$PALSERVER_SH" ]; then
-            echo "PalServer installed"
-            break
+    # --- proton (EXPERIMENTAL, opt-in): NOT booted/validated -- reviewed --
+    # for syntactic/logical consistency only. Installs the WINDOWS PalServer
+    # build (steamcmd +@sSteamCmdForcePlatformType windows) plus GE-Proton
+    # (GloriousEggroll), and lays out the UE4SS directory under
+    # Pal/Binaries/Win64 so RE-UE4SS/script mods have somewhere to live.
+    # Wants a bigger machine_type than native (see main.tf) and, like any
+    # startup.sh/metadata change, only takes effect after a planned
+    # stop/apply/start of this VM (data disk survives; players do not stay
+    # connected through it) -- never flip runtime_mode as a routine apply.
+    PALSERVER_EXE="/home/steam/Steam/Pal/Binaries/Win64/PalServer.exe"
+    GE_PROTON_DIR="/home/steam/GE-Proton"
+
+    echo "Installing/validating Palworld (WINDOWS build, required for Proton)"
+    if [ -f "$PALSERVER_EXE" ]; then
+        echo "PalServer.exe already present on data disk; skipping steamcmd download"
+    else
+        for attempt in 1 2 3 4 5; do
+            echo "steamcmd attempt ${attempt} (forced windows platform)"
+            runuser -u steam -- /usr/games/steamcmd \
+                +force_install_dir /home/steam/Steam \
+                +login anonymous \
+                +@sSteamCmdForcePlatformType windows \
+                +app_update 2394010 validate \
+                +quit || true
+            if [ -f "$PALSERVER_EXE" ]; then
+                echo "PalServer.exe installed"
+                break
+            fi
+            echo "PalServer.exe not found yet, retrying..."
+            sleep 5
+        done
+    fi
+
+    echo "Installing GE-Proton (latest GloriousEggroll release) if missing"
+    if [ -x "$GE_PROTON_DIR/proton" ]; then
+        echo "GE-Proton already present at $GE_PROTON_DIR; skipping download"
+    else
+        mkdir -p "$GE_PROTON_DIR"
+        # `|| true`: under `set -e -o pipefail`, grep exiting 1 on no match
+        # (e.g. GitHub API shape changes, rate-limited) would otherwise abort
+        # the whole script; fall through to the empty-URL warning instead.
+        GE_PROTON_TARBALL_URL="$(curl -s \
+            https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest \
+            | grep -o '"browser_download_url": *"[^"]*\.tar\.gz"' \
+            | head -n1 | grep -o 'https://[^"]*')" || true
+        if [ -n "$GE_PROTON_TARBALL_URL" ]; then
+            echo "Downloading GE-Proton from $GE_PROTON_TARBALL_URL"
+            curl -L -o /tmp/ge-proton.tar.gz "$GE_PROTON_TARBALL_URL"
+            tar -xzf /tmp/ge-proton.tar.gz -C "$GE_PROTON_DIR" --strip-components=1
+            rm -f /tmp/ge-proton.tar.gz
+        else
+            echo "WARNING: could not resolve the latest GE-Proton release URL; proton runtime will not be able to start until $GE_PROTON_DIR/proton exists"
         fi
-        echo "PalServer.sh not found yet, retrying..."
-        sleep 5
-    done
+        chown -R steam:steam "$GE_PROTON_DIR"
+    fi
+
+    echo "Preparing UE4SS directory (Pal/Binaries/Win64/ue4ss)"
+    UE4SS_DIR="/home/steam/Steam/Pal/Binaries/Win64/ue4ss"
+    runuser -u steam -- mkdir -p "$UE4SS_DIR"
+
+    STEAM_COMPAT_DATA_PATH="/home/steam/Steam/steamcompat"
+    STEAM_COMPAT_CLIENT_INSTALL_PATH="/home/steam/.steam"
+    runuser -u steam -- mkdir -p "$STEAM_COMPAT_DATA_PATH" "$STEAM_COMPAT_CLIENT_INSTALL_PATH"
 fi
-
-
-echo "Linking steamclient.so (required by PalServer)"
-runuser -u steam -- mkdir -p /home/steam/.steam/sdk64
-ln -sf /home/steam/Steam/linux64/steamclient.so \
-    /home/steam/.steam/sdk64/steamclient.so
-chown -h steam:steam /home/steam/.steam/sdk64/steamclient.so
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +191,7 @@ chown -h steam:steam /home/steam/.steam/sdk64/steamclient.so
 # ---------------------------------------------------------------------------
 echo "Fetching admin panel files + config from metadata/bucket"
 
-META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
-meta() { curl -s -H "Metadata-Flavor: Google" "$META/$1"; }
-
+# META/meta() already defined above (Runtime mode section) -- reused here.
 PANEL_DIR="/opt/palworld-panel"
 mkdir -p "$PANEL_DIR"
 
@@ -176,7 +260,9 @@ chown -R steam:steam "$PANEL_DIR"
 # ---------------------------------------------------------------------------
 echo "Writing systemd units"
 
-cat >/etc/systemd/system/palworld.service <<EOF
+if [ "$RUNTIME_MODE" = "native" ]; then
+    # native (default): EXACTLY current behavior, unaltered.
+    cat >/etc/systemd/system/palworld.service <<EOF
 [Unit]
 Description=Palworld Server
 After=network.target
@@ -191,6 +277,30 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
+else
+    # proton (EXPERIMENTAL, opt-in, NOT booted/validated): launch the
+    # Windows PalServer.exe through GE-Proton. STEAM_COMPAT_DATA_PATH/
+    # STEAM_COMPAT_CLIENT_INSTALL_PATH are set up in the Palworld-install
+    # branch above. Requires GE-Proton + the Windows build to already be
+    # in place (installed earlier in this script when RUNTIME_MODE=proton).
+    cat >/etc/systemd/system/palworld.service <<EOF
+[Unit]
+Description=Palworld Server (EXPERIMENTAL: runtime_mode=proton)
+After=network.target
+
+[Service]
+User=steam
+WorkingDirectory=/home/steam/Steam/Pal/Binaries/Win64
+Environment=STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH
+Environment=STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH
+ExecStart=$GE_PROTON_DIR/proton run /home/steam/Steam/Pal/Binaries/Win64/PalServer.exe -useperfthreads -NoAsyncLoadingThread -UseMultithreadForDS
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
 
 cat >/etc/systemd/system/palworld-panel.service <<EOF
 [Unit]
@@ -215,6 +325,7 @@ Environment=INDEX_PATH=$PANEL_DIR/index.html
 Environment=PANEL_BUCKET=$PANEL_BUCKET
 Environment=PANEL_DIR=$PANEL_DIR
 Environment=INTERNAL_TOKEN=$INTERNAL_TOKEN
+Environment=RUNTIME_MODE=$RUNTIME_MODE
 ExecStart=$PANEL_DIR/venv/bin/python $PANEL_DIR/panel.py serve
 Restart=always
 RestartSec=10

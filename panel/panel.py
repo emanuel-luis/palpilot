@@ -22,6 +22,12 @@ Config via env vars:
                                 Empty => signed mode disabled, Basic-Auth only.
   BACKUP_KEEP                   backups kept per slot, local + remote (default 5)
   MOD_MAX_BYTES                 byte ceiling for mod upload/url-install (default 500MB)
+  RUNTIME_MODE                  "native" (default, unchanged) or "proton"; gates the UE4SS
+                                 mod capability -- native servers can only run pak/LogicMods
+  LOGICMODS_DIR                 path to Paks/LogicMods (default under STEAM_DIR)
+  UE4SS_ROOT_DIR / UE4SS_MODS_DIR  path to the UE4SS tree / its Mods dir (Proton-only)
+  UE4SS_DEFAULT_URL             optional default source for /api/mods/ue4ss/install
+                                 when the caller doesn't pass a url (empty => url required)
 
 CLI:
   python panel.py bootstrap    ensure REST API keys exist in the ini, then exit
@@ -45,6 +51,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 # ---------------------------------------------------------------------------
 # Config
@@ -94,6 +101,20 @@ MODS_DIR = os.environ.get("MODS_DIR", f"{STEAM_DIR}/Pal/Content/Paks/~mods")
 SLOTS_META = os.environ.get("SLOTS_META", f"{STEAM_DIR}/Pal/Saved/palworld-slots.json")
 # Sidecar metadata for mods (filename -> {source_url, installed_at, enabled}).
 MODS_META = os.environ.get("MODS_META", f"{STEAM_DIR}/Pal/Saved/palworld-mods.json")
+# LogicMods .pak files drop into Paks/LogicMods instead of ~mods.
+LOGICMODS_DIR = os.environ.get("LOGICMODS_DIR", f"{STEAM_DIR}/Pal/Content/Paks/LogicMods")
+# UE4SS script-mod tree (Proton-only; native servers can't load UE4SS).
+UE4SS_ROOT_DIR = os.environ.get("UE4SS_ROOT_DIR", f"{STEAM_DIR}/Pal/Binaries/Win64/ue4ss")
+UE4SS_MODS_DIR = os.environ.get("UE4SS_MODS_DIR", f"{UE4SS_ROOT_DIR}/Mods")
+# Optional default source for `POST /api/mods/ue4ss/install` when the caller
+# doesn't pass a url. Empty by default -- nothing is hardcoded/guessed; the
+# caller (or the operator, via env) must supply a real RE-UE4SS download URL.
+UE4SS_DEFAULT_URL = os.environ.get("UE4SS_DEFAULT_URL", "")
+# Server runtime this VM is configured for. "native" (default, unchanged
+# today) can only run .pak/LogicMods; "proton" additionally unlocks UE4SS
+# script mods. Purely a capability gate here -- switching runtimes is a
+# startup.sh/Terraform concern, not this file's.
+RUNTIME_MODE = os.environ.get("RUNTIME_MODE", "native")
 
 # Number of per-slot backups kept, both locally and in GCS (prune-on-write).
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "5"))
@@ -557,6 +578,59 @@ def create_slot(name: str) -> dict:
     }
 
 
+def clone_slot(guid: str, name: str) -> dict:
+    """Copy a world folder to a brand-new guid and register it as its own
+    slot (metadata carries `cloned_from`). Copy-only: if `guid` is the
+    active slot, this clones whatever is on disk right now, which may lag
+    behind unsaved in-game state -- callers are told to save first."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "reason": "validation", "error": "invalid guid"}
+    src = os.path.join(SAVEGAMES_DIR, guid)
+    if not os.path.isdir(src):
+        return {"ok": False, "reason": "not_found", "error": "source slot not found"}
+    new_guid = secrets.token_hex(16).upper()
+    dest = os.path.join(SAVEGAMES_DIR, new_guid)
+    shutil.copytree(src, dest)
+    _chown_steam(dest, recursive=True)
+    friendly = _safe_name(name) or new_guid
+    created = _timestamp()
+    meta = _load_slots_meta()
+    meta[new_guid] = {"name": friendly, "created": created, "cloned_from": guid}
+    _save_slots_meta(meta)
+    result = {
+        "ok": True,
+        "error": None,
+        "guid": new_guid,
+        "name": friendly,
+        "created": created,
+        "cloned_from": guid,
+    }
+    if guid == get_active_world():
+        result["note"] = (
+            "cloned the active slot's last saved state on disk; "
+            "save in-game first if you want the freshest copy"
+        )
+    return result
+
+
+def rename_slot(guid: str, name: str) -> dict:
+    """Update a slot's friendly name in metadata only -- no filesystem move."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "reason": "validation", "error": "invalid guid"}
+    friendly = _safe_name(name)
+    if not friendly:
+        return {"ok": False, "reason": "validation", "error": "name is required"}
+    exists = guid == get_active_world() or os.path.isdir(os.path.join(SAVEGAMES_DIR, guid))
+    if not exists:
+        return {"ok": False, "reason": "not_found", "error": "slot not found"}
+    meta = _load_slots_meta()
+    entry = meta.setdefault(guid, {})
+    entry["name"] = friendly
+    entry.setdefault("created", _timestamp())
+    _save_slots_meta(meta)
+    return {"ok": True, "error": None, "guid": guid, "name": friendly}
+
+
 # ---- backups: one policy, naming scheme, local+GCS, retention pruning ----
 
 # world-<guid>-<label>-<timestamp>.tar.gz ; timestamp is sortable (ISO-ish).
@@ -852,7 +926,15 @@ def delete_slot(guid: str) -> dict:
     return {"ok": True, "error": None, "deleted": guid, "backup": backup}
 
 
-# ---- mods (.pak into ~mods, sidecar metadata, enable via rename) ----
+# ---- mods: dual-mode (native pak/logic vs Proton-only ue4ss) ----
+#
+# Three on-disk locations, one sidecar metadata file keyed by mod name
+# (pak/logic: the *.pak filename; ue4ss: the mod's folder name), each entry
+# extended with a "type" field:
+#   pak    ~mods/*.pak                         enable = rename .pak<->.pak.disabled
+#   logic  Paks/LogicMods/*.pak                enable = rename .pak<->.pak.disabled
+#   ue4ss  Binaries/Win64/ue4ss/Mods/<name>/    enable = enabled.txt marker file
+# list_mods() self-prunes metadata whose backing file/dir is gone (M9-style).
 
 
 def _load_mods_meta() -> dict:
@@ -870,20 +952,59 @@ def _save_mods_meta(meta: dict):
     _chown_steam(MODS_META)
 
 
-def _mod_path(name: str) -> str | None:
+def _pak_style_path(base_dir: str, name: str) -> str | None:
     safe = _safe_name(name)
     if not safe.lower().endswith(".pak") or safe in (".pak",):
         return None
-    return os.path.join(MODS_DIR, safe)
+    return os.path.join(base_dir, safe)
+
+
+def _mod_path(name: str) -> str | None:
+    """Path a loose *.pak mod would live at in ~mods."""
+    return _pak_style_path(MODS_DIR, name)
+
+
+def _logic_mod_path(name: str) -> str | None:
+    """Path a LogicMods *.pak mod would live at in Paks/LogicMods."""
+    return _pak_style_path(LOGICMODS_DIR, name)
+
+
+def _ue4ss_mod_dir(name: str) -> str | None:
+    """Path a UE4SS script mod's folder would live at under ue4ss/Mods."""
+    safe = _safe_name(name)
+    if not safe or safe.startswith("."):
+        return None
+    return os.path.join(UE4SS_MODS_DIR, safe)
+
+
+def _resolve_mod(name: str):
+    """Locate `name` across the three mod locations, pak -> logic -> ue4ss.
+    Returns (type, active_path_or_dir, disabled_path_or_marker) or None."""
+    pak_dest = _mod_path(name)
+    if pak_dest and (os.path.isfile(pak_dest) or os.path.isfile(pak_dest + ".disabled")):
+        return "pak", pak_dest, pak_dest + ".disabled"
+    logic_dest = _logic_mod_path(name)
+    if logic_dest and (os.path.isfile(logic_dest) or os.path.isfile(logic_dest + ".disabled")):
+        return "logic", logic_dest, logic_dest + ".disabled"
+    ue4ss_dir = _ue4ss_mod_dir(name)
+    if ue4ss_dir and os.path.isdir(ue4ss_dir):
+        return "ue4ss", ue4ss_dir, os.path.join(ue4ss_dir, "enabled.txt")
+    return None
 
 
 def list_mods() -> dict:
+    """List mods across all three locations. The filesystem is the source
+    of truth: any sidecar entry whose backing file/dir is gone is
+    garbage-collected instead of accumulating forever."""
     meta = _load_mods_meta()
     mods = []
     seen = set()
-    if os.path.isdir(MODS_DIR):
-        for n in sorted(os.listdir(MODS_DIR)):
-            full = os.path.join(MODS_DIR, n)
+
+    def _scan_pak_style(base_dir: str, mod_type: str):
+        if not os.path.isdir(base_dir):
+            return
+        for n in sorted(os.listdir(base_dir)):
+            full = os.path.join(base_dir, n)
             if not os.path.isfile(full):
                 continue
             lower = n.lower()
@@ -898,18 +1019,49 @@ def list_mods() -> dict:
             mods.append(
                 {
                     "name": base,
+                    "type": mod_type,
                     "size": os.path.getsize(full),
                     "enabled": enabled,
                     "source_url": m.get("source_url"),
                     "installed_at": m.get("installed_at"),
                 }
             )
+
+    _scan_pak_style(MODS_DIR, "pak")
+    _scan_pak_style(LOGICMODS_DIR, "logic")
+
+    if os.path.isdir(UE4SS_MODS_DIR):
+        for n in sorted(os.listdir(UE4SS_MODS_DIR)):
+            full = os.path.join(UE4SS_MODS_DIR, n)
+            if not os.path.isdir(full):
+                continue
+            seen.add(n)
+            m = meta.get(n, {})
+            mods.append(
+                {
+                    "name": n,
+                    "type": "ue4ss",
+                    "size": _dir_size(full),
+                    "enabled": os.path.isfile(os.path.join(full, "enabled.txt")),
+                    "source_url": m.get("source_url"),
+                    "installed_at": m.get("installed_at"),
+                }
+            )
+
     stale = [k for k in meta if k not in seen]
     if stale:
         for k in stale:
             meta.pop(k, None)
         _save_mods_meta(meta)
-    return {"ok": True, "error": None, "dir": MODS_DIR, "mods": mods}
+
+    return {
+        "ok": True,
+        "error": None,
+        "dir": MODS_DIR,
+        "runtime_mode": RUNTIME_MODE,
+        "capabilities": {"pak": True, "logic": True, "ue4ss": RUNTIME_MODE == "proton"},
+        "mods": mods,
+    }
 
 
 def save_mod_file(name: str, tmp_path: str, size: int) -> dict:
@@ -930,9 +1082,259 @@ def save_mod_file(name: str, tmp_path: str, size: int) -> dict:
         "source_url": meta.get(base, {}).get("source_url"),
         "installed_at": _timestamp(),
         "enabled": True,
+        "type": "pak",
     }
     _save_mods_meta(meta)
-    return {"ok": True, "error": None, "name": base, "size": size}
+    return {"ok": True, "error": None, "name": base, "size": size, "type": "pak"}
+
+
+# ---- mod archives (.zip): layout detection + file placement only --------
+#
+# NO cmd/ps1/script execution, ever. This only extracts an archive and
+# copies files into the location a Windows setup script would use; it
+# never runs anything from inside the archive.
+
+
+def _safe_zip_extract(zip_path: str, extract_root: str):
+    """Extract `zip_path` into `extract_root`, refusing any entry whose
+    resolved path would land outside it (zip-slip guard). Raises
+    zipfile.BadZipFile for a corrupt archive, ValueError for a zip-slip
+    attempt -- callers turn both into a validation error."""
+    with zipfile.ZipFile(zip_path) as zf:
+        root_abs = os.path.abspath(extract_root)
+        for member in zf.namelist():
+            dest = os.path.abspath(os.path.join(extract_root, member))
+            if not (dest == root_abs or dest.startswith(root_abs + os.sep)):
+                raise ValueError("zip entry escapes archive root")
+        zf.extractall(extract_root)
+
+
+def _detect_archive_layout(root: str) -> str | None:
+    """Classify an extracted mod archive by walking its tree once. UE4SS
+    markers are checked first: a script-mod bundle may also ship a helper
+    .pak, but the *dominant* type is what gates the Proton requirement."""
+    has_ue4ss = has_logicmods = has_pak = False
+    for dirpath, dirnames, filenames in os.walk(root):
+        for d in dirnames:
+            dl = d.lower()
+            if dl in ("mods", "dlls"):
+                has_ue4ss = True
+            if dl == "logicmods":
+                has_logicmods = True
+        for f in filenames:
+            fl = f.lower()
+            if fl == "enabled.txt" or fl.endswith(".dll") or "ue4ss" in fl:
+                has_ue4ss = True
+            if fl.endswith(".pak"):
+                has_pak = True
+    if has_ue4ss:
+        return "ue4ss"
+    if has_logicmods:
+        return "logic"
+    if has_pak:
+        return "pak"
+    return None
+
+
+def _place_pak_files(root: str, source_url: str | None) -> list:
+    """Copy every loose *.pak found anywhere in the archive into ~mods."""
+    os.makedirs(MODS_DIR, exist_ok=True)
+    installed = []
+    meta = _load_mods_meta()
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for f in filenames:
+            if not f.lower().endswith(".pak"):
+                continue
+            safe = _safe_name(f)
+            if not safe.lower().endswith(".pak"):
+                continue
+            dest = os.path.join(MODS_DIR, safe)
+            shutil.copy2(os.path.join(dirpath, f), dest)
+            _chown_steam(dest)
+            meta[safe] = {"source_url": source_url, "installed_at": _timestamp(), "enabled": True, "type": "pak"}
+            installed.append(safe)
+    _save_mods_meta(meta)
+    return installed
+
+
+def _place_logic_files(root: str, source_url: str | None) -> list:
+    """Copy the *.pak files inside any LogicMods/ folder into Paks/LogicMods."""
+    os.makedirs(LOGICMODS_DIR, exist_ok=True)
+    installed = []
+    meta = _load_mods_meta()
+    for dirpath, dirnames, _filenames in os.walk(root):
+        for d in dirnames:
+            if d.lower() != "logicmods":
+                continue
+            logic_src = os.path.join(dirpath, d)
+            for f in sorted(os.listdir(logic_src)):
+                if not f.lower().endswith(".pak"):
+                    continue
+                safe = _safe_name(f)
+                if not safe.lower().endswith(".pak"):
+                    continue
+                dest = os.path.join(LOGICMODS_DIR, safe)
+                shutil.copy2(os.path.join(logic_src, f), dest)
+                _chown_steam(dest)
+                meta[safe] = {
+                    "source_url": source_url,
+                    "installed_at": _timestamp(),
+                    "enabled": True,
+                    "type": "logic",
+                }
+                installed.append(safe)
+    _save_mods_meta(meta)
+    return installed
+
+
+def _place_ue4ss_files(root: str, source_url: str | None) -> list:
+    """Place a UE4SS script mod into ue4ss/Mods/<name>/, enabled by default
+    (an enabled.txt marker is created if the bundle didn't ship one).
+    Prefers a `Mods/` wrapper folder (one subfolder per mod); falls back to
+    treating the archive's single top-level folder (or its root) as one mod."""
+    os.makedirs(UE4SS_MODS_DIR, exist_ok=True)
+    installed = []
+    meta = _load_mods_meta()
+
+    def _install_one(src: str, name_hint: str):
+        safe = _safe_name(name_hint) or ("mod-" + secrets.token_hex(4))
+        dest = os.path.join(UE4SS_MODS_DIR, safe)
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+        marker = os.path.join(dest, "enabled.txt")
+        if not os.path.exists(marker):
+            atomic_write(marker, "")
+        _chown_steam(dest, recursive=True)
+        meta[safe] = {"source_url": source_url, "installed_at": _timestamp(), "enabled": True, "type": "ue4ss"}
+        installed.append(safe)
+
+    mods_wrapper = None
+    for dirpath, dirnames, _filenames in os.walk(root):
+        for d in dirnames:
+            if d.lower() == "mods":
+                mods_wrapper = os.path.join(dirpath, d)
+                break
+        if mods_wrapper:
+            break
+
+    if mods_wrapper:
+        for entry in sorted(os.listdir(mods_wrapper)):
+            full = os.path.join(mods_wrapper, entry)
+            if os.path.isdir(full):
+                _install_one(full, entry)
+    else:
+        entries = [e for e in os.listdir(root) if e != "__MACOSX"]
+        if len(entries) == 1 and os.path.isdir(os.path.join(root, entries[0])):
+            _install_one(os.path.join(root, entries[0]), entries[0])
+        else:
+            _install_one(root, "mod-" + secrets.token_hex(4))
+
+    _save_mods_meta(meta)
+    return installed
+
+
+def install_mod_archive(zip_path: str, source_url: str | None = None) -> dict:
+    """Extract a mod .zip and place its files by detected layout: loose
+    *.pak -> ~mods; a LogicMods/ dir -> Paks/LogicMods; a UE4SS layout
+    (Mods/, dlls/, enabled.txt, or *ue4ss* files) -> ue4ss/Mods. If the
+    detected type is ue4ss and the runtime isn't Proton, refuses (409)."""
+    extract_root = tempfile.mkdtemp(prefix="modzip-")
+    try:
+        try:
+            _safe_zip_extract(zip_path, extract_root)
+        except zipfile.BadZipFile:
+            return {"ok": False, "reason": "validation", "error": "not a valid zip archive"}
+        except ValueError as e:
+            return {"ok": False, "reason": "validation", "error": str(e)}
+
+        mtype = _detect_archive_layout(extract_root)
+        if not mtype:
+            return {
+                "ok": False,
+                "reason": "validation",
+                "error": "could not detect mod layout (expected loose .pak, a LogicMods/ folder, or a UE4SS Mods/ layout)",
+            }
+        if mtype == "ue4ss" and RUNTIME_MODE != "proton":
+            return {
+                "ok": False,
+                "reason": "conflict",
+                "error": "requires Proton runtime (enable it in server settings)",
+            }
+        placer = {"pak": _place_pak_files, "logic": _place_logic_files, "ue4ss": _place_ue4ss_files}[mtype]
+        installed = placer(extract_root, source_url)
+        if not installed:
+            return {"ok": False, "reason": "validation", "error": f"no files placed for detected type '{mtype}'"}
+        return {"ok": True, "error": None, "type": mtype, "installed": installed}
+    finally:
+        shutil.rmtree(extract_root, ignore_errors=True)
+
+
+def install_ue4ss_runtime(url: str = "") -> dict:
+    """Download RE-UE4SS and place it into Pal/Binaries/Win64 (Proton-only).
+    File placement only -- nothing from the archive is ever executed."""
+    if RUNTIME_MODE != "proton":
+        return {"ok": False, "reason": "conflict", "error": "requires Proton runtime (enable it in server settings)"}
+    target_url = url or UE4SS_DEFAULT_URL
+    if not target_url:
+        return {"ok": False, "reason": "validation", "error": "no url provided and UE4SS_DEFAULT_URL is not configured"}
+    if not re.match(r"^https?://", target_url):
+        return {"ok": False, "reason": "validation", "error": "url must be http(s)"}
+    parsed = urllib.parse.urlparse(target_url)
+    if not parsed.hostname or _is_blocked_host(parsed.hostname):
+        return {"ok": False, "reason": "validation", "error": "target host is not allowed"}
+
+    req = urllib.request.Request(target_url, headers={"User-Agent": "palworld-panel"})
+    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=".ue4ss-")
+    total = 0
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            length = resp.headers.get("Content-Length")
+            if length and int(length) > MOD_MAX_BYTES:
+                raise ValueError(f"remote file exceeds MOD_MAX_BYTES ({MOD_MAX_BYTES})")
+            with os.fdopen(fd, "wb") as f:
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MOD_MAX_BYTES:
+                        raise ValueError(f"remote file exceeds MOD_MAX_BYTES ({MOD_MAX_BYTES})")
+                    f.write(chunk)
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as e:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return {"ok": False, "reason": "validation", "error": f"download failed: {e}"}
+
+    win64_dir = os.path.join(STEAM_DIR, "Pal", "Binaries", "Win64")
+    extract_root = tempfile.mkdtemp(prefix="ue4ss-")
+    try:
+        os.makedirs(win64_dir, exist_ok=True)
+        _safe_zip_extract(tmp_path, extract_root)
+        for entry in os.listdir(extract_root):
+            src = os.path.join(extract_root, entry)
+            dest = os.path.join(win64_dir, entry)
+            if os.path.isdir(src):
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                shutil.copytree(src, dest)
+            else:
+                shutil.copy2(src, dest)
+        _chown_steam(win64_dir, recursive=True)
+    except (zipfile.BadZipFile, ValueError, OSError) as e:
+        return {"ok": False, "reason": "validation", "error": f"install failed: {e}"}
+    finally:
+        shutil.rmtree(extract_root, ignore_errors=True)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    os.makedirs(UE4SS_MODS_DIR, exist_ok=True)
+    _chown_steam(UE4SS_MODS_DIR, recursive=True)
+    return {"ok": True, "error": None, "installed": True, "dir": win64_dir}
 
 
 def _is_blocked_host(hostname: str) -> bool:
@@ -963,12 +1365,44 @@ def _is_blocked_host(hostname: str) -> bool:
 
 
 def install_mod_url(url: str, name: str = "") -> dict:
+    """Same rules as upload: a resolved *.pak downloads straight into
+    ~mods; a resolved *.zip is fetched then run through the same
+    layout-detecting placement as an uploaded archive (size-capped,
+    SSRF-guarded either way)."""
     if not re.match(r"^https?://", url or ""):
         return {"ok": False, "reason": "validation", "error": "url must be http(s)"}
     parsed = urllib.parse.urlparse(url)
     if not parsed.hostname or _is_blocked_host(parsed.hostname):
         return {"ok": False, "reason": "validation", "error": "target host is not allowed"}
     fname = name or os.path.basename(parsed.path)
+
+    if (fname or "").lower().endswith(".zip"):
+        req = urllib.request.Request(url, headers={"User-Agent": "palworld-panel"})
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=".fetch-")
+        total = 0
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                length = resp.headers.get("Content-Length")
+                if length and int(length) > MOD_MAX_BYTES:
+                    raise ValueError(f"remote file exceeds MOD_MAX_BYTES ({MOD_MAX_BYTES})")
+                with os.fdopen(fd, "wb") as f:
+                    while True:
+                        chunk = resp.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MOD_MAX_BYTES:
+                            raise ValueError(f"remote file exceeds MOD_MAX_BYTES ({MOD_MAX_BYTES})")
+                        f.write(chunk)
+            return install_mod_archive(tmp_path, source_url=url)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, OSError) as e:
+            return {"ok": False, "reason": "validation", "error": f"download failed: {e}"}
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
     dest = _mod_path(fname)
     if not dest:
         return {"ok": False, "reason": "validation", "error": "resolved name is not a safe *.pak filename"}
@@ -999,48 +1433,72 @@ def install_mod_url(url: str, name: str = "") -> dict:
     r = save_mod_file(fname, tmp_path, total)
     if r.get("ok"):
         meta = _load_mods_meta()
-        meta.setdefault(r["name"], {})["source_url"] = url
+        entry = meta.setdefault(r["name"], {})
+        entry["source_url"] = url
+        entry["type"] = "pak"
         _save_mods_meta(meta)
     return r
 
 
 def set_mod_enabled(name: str, enabled: bool) -> dict:
-    """Enable/disable = rename `.pak` <-> `.pak.disabled` (no delete)."""
-    dest = _mod_path(name)
-    if not dest:
-        return {"ok": False, "reason": "validation", "error": "invalid mod name"}
-    disabled = dest + ".disabled"
-    base = os.path.basename(dest)
-    if enabled:
-        if os.path.isfile(disabled) and not os.path.isfile(dest):
-            os.replace(disabled, dest)
-        elif not os.path.isfile(dest):
-            return {"ok": False, "reason": "not_found", "error": "not found"}
-    else:
-        if os.path.isfile(dest) and not os.path.isfile(disabled):
-            os.replace(dest, disabled)
-        elif not os.path.isfile(disabled):
-            return {"ok": False, "reason": "not_found", "error": "not found"}
-    _chown_steam(dest if os.path.isfile(dest) else disabled)
+    """Enable/disable across all mod types: pak/logic toggle via the
+    `.pak` <-> `.pak.disabled` rename trick; ue4ss toggles the
+    `enabled.txt` marker file UE4SS itself looks for inside the mod folder."""
+    loc = _resolve_mod(name)
+    if not loc:
+        return {"ok": False, "reason": "not_found", "error": "not found"}
+    mtype, active, marker = loc
+    if mtype in ("pak", "logic"):
+        if enabled:
+            if os.path.isfile(marker) and not os.path.isfile(active):
+                os.replace(marker, active)
+            elif not os.path.isfile(active):
+                return {"ok": False, "reason": "not_found", "error": "not found"}
+        else:
+            if os.path.isfile(active) and not os.path.isfile(marker):
+                os.replace(active, marker)
+            elif not os.path.isfile(marker):
+                return {"ok": False, "reason": "not_found", "error": "not found"}
+        _chown_steam(active if os.path.isfile(active) else marker)
+        base = os.path.basename(active)
+    else:  # ue4ss: active = mod dir, marker = enabled.txt sentinel inside it
+        if enabled:
+            atomic_write(marker, "")
+        else:
+            try:
+                os.remove(marker)
+            except OSError:
+                pass
+        _chown_steam(active, recursive=True)
+        base = os.path.basename(active)
     meta = _load_mods_meta()
-    meta.setdefault(base, {})["enabled"] = enabled
+    entry = meta.setdefault(base, {})
+    entry["enabled"] = enabled
+    entry["type"] = mtype
     _save_mods_meta(meta)
-    return {"ok": True, "error": None, "name": base, "enabled": enabled}
+    return {"ok": True, "error": None, "name": base, "type": mtype, "enabled": enabled}
 
 
 def delete_mod(name: str) -> dict:
-    dest = _mod_path(name)
-    if not dest:
-        return {"ok": False, "reason": "validation", "error": "invalid mod name"}
-    disabled = dest + ".disabled"
-    target = dest if os.path.isfile(dest) else (disabled if os.path.isfile(disabled) else None)
-    if not target:
+    """Delete across all mod types: a pak/logic file (enabled or disabled),
+    or a whole ue4ss mod directory."""
+    loc = _resolve_mod(name)
+    if not loc:
         return {"ok": False, "reason": "not_found", "error": "not found"}
-    os.remove(target)
+    mtype, active, marker = loc
+    if mtype in ("pak", "logic"):
+        target = active if os.path.isfile(active) else (marker if os.path.isfile(marker) else None)
+        if not target:
+            return {"ok": False, "reason": "not_found", "error": "not found"}
+        os.remove(target)
+        base = os.path.basename(active)
+    else:
+        shutil.rmtree(active, ignore_errors=True)
+        base = os.path.basename(active)
     meta = _load_mods_meta()
-    meta.pop(os.path.basename(dest), None)
+    meta.pop(base, None)
     _save_mods_meta(meta)
-    return {"ok": True, "error": None, "deleted": os.path.basename(dest)}
+    return {"ok": True, "error": None, "deleted": base, "type": mtype}
 
 
 # ---------------------------------------------------------------------------
@@ -1359,6 +1817,16 @@ def build_app():
         name = (payload or {}).get("name") or ""
         return _envelope(create_slot(name))
 
+    @app.post("/api/saves/{guid}/clone")
+    async def saves_clone(guid: str, payload: dict, _: str = Depends(require("config"))):
+        name = (payload or {}).get("name") or ""
+        return _envelope(clone_slot(guid, name))
+
+    @app.post("/api/saves/{guid}/rename")
+    async def saves_rename(guid: str, payload: dict, _: str = Depends(require("config"))):
+        name = (payload or {}).get("name") or ""
+        return _envelope(rename_slot(guid, name))
+
     @app.post("/api/saves/{guid}/activate")
     def saves_activate(guid: str, restart: bool = True, _: str = Depends(require("config"))):
         return _envelope(activate_slot(guid, restart=restart))
@@ -1397,7 +1865,49 @@ def build_app():
     ):
         # Streamed upload (no python-multipart dependency) with a byte
         # ceiling enforced as chunks arrive, so we never buffer the whole
-        # file in RAM (M1) and never write past MOD_MAX_BYTES.
+        # file in RAM (M1) and never write past MOD_MAX_BYTES. Accepts a
+        # loose *.pak (straight into ~mods) or a *.zip bundle (extracted and
+        # placed by detected layout -- pak/logic/ue4ss; see install_mod_archive).
+        lower = (name or "").lower()
+        if lower.endswith(".zip"):
+            fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix=".upload-")
+            total = 0
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    async for chunk in request.stream():
+                        total += len(chunk)
+                        if total > MOD_MAX_BYTES:
+                            raise HTTPException(400, f"upload exceeds MOD_MAX_BYTES ({MOD_MAX_BYTES})")
+                        f.write(chunk)
+            except HTTPException:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+            except Exception:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+            try:
+                r = install_mod_archive(tmp_path, source_url=None)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            if r.get("ok") and restart:
+                try:
+                    restart_service()
+                    r["restarted"] = True
+                except subprocess.CalledProcessError:
+                    r["restarted"] = False
+            return _envelope(r)
+
+        if not lower.endswith(".pak"):
+            return _envelope({"ok": False, "reason": "validation", "error": "name must end in .pak or .zip"})
         if not _mod_path(name):
             return _envelope({"ok": False, "reason": "validation", "error": "name must be a safe *.pak filename"})
         os.makedirs(MODS_DIR, exist_ok=True)
@@ -1441,6 +1951,11 @@ def build_app():
             except subprocess.CalledProcessError:
                 r["restarted"] = False
         return _envelope(r)
+
+    @app.post("/api/mods/ue4ss/install")
+    async def mods_ue4ss_install(payload: dict | None = None, _: str = Depends(require("config"))):
+        url = (payload or {}).get("url") or ""
+        return _envelope(install_ue4ss_runtime(url))
 
     @app.post("/api/mods/{name}/enable")
     def mods_enable(name: str, _: str = Depends(require("config"))):

@@ -1,0 +1,22 @@
+{
+  "name": "palpilot-frontend",
+  "version": "2.0.0",
+  "private": true,
+  "description": "PalPilot v2 coordinator UI — Vite + Vue 3 SFC app, built to a single self-contained coordinator/index.html.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "pinia": "^2.3.1",
+    "vue": "^3.5.13",
+    "vue-i18n": "^9.14.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^6.0.7",
+    "vite-plugin-singlefile": "^2.1.0"
+  }
+}
