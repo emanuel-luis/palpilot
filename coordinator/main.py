@@ -151,7 +151,7 @@ def _vm_get_json(path):
         return None
 
 
-def _proxy(request, path, method):
+def _proxy(request, path, method, timeout=30):
     try:
         st = _vm_status()
     except Exception as e:  # noqa: BLE001
@@ -169,7 +169,7 @@ def _proxy(request, path, method):
             headers={"Content-Type": request.headers.get("Content-Type", "application/json")}
             if method == "POST"
             else {},
-            timeout=30,
+            timeout=timeout,
         )
         return (r.content, r.status_code, {"Content-Type": r.headers.get("Content-Type", "application/json")})
     except requests.RequestException as e:
@@ -292,6 +292,15 @@ def coordinator(request):
         if method == "POST" and not need("commands"):
             return _json({"error": "forbidden"}, 403)
         return _proxy(request, path, method)
+
+    # --- save slots + mods (file manipulation on the VM) ---
+    if path.startswith("/api/saves") or path.startswith("/api/mods"):
+        if method == "GET" and not need("view"):
+            return _json({"error": "forbidden"}, 403)
+        if method != "GET" and not need("config"):
+            return _json({"error": "forbidden"}, 403)
+        # switching/backing-up a world tars + uploads: allow more time.
+        return _proxy(request, path, method, timeout=280)
 
     if path == "/api/restart" and method == "POST":
         if not need("config"):

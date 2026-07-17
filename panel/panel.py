@@ -26,9 +26,12 @@ CLI:
 import base64
 import json
 import os
+import re
 import secrets
+import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -59,7 +62,46 @@ INDEX_PATH = os.environ.get(
     "INDEX_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 )
 
+# --- save-slot + mod manipulation ---
+# Base of the persistent data disk. PalServer stores everything under here.
+STEAM_DIR = os.environ.get("STEAM_DIR", "/home/steam/Steam")
+# Worlds live in SaveGames/0/<WorldGUID>; the active one is named by
+# DedicatedServerName in GameUserSettings.ini. All worlds coexist here.
+SAVEGAMES_DIR = os.environ.get(
+    "SAVEGAMES_DIR", f"{STEAM_DIR}/Pal/Saved/SaveGames/0"
+)
+GUS_PATH = os.environ.get(
+    "GUS_PATH", f"{STEAM_DIR}/Pal/Saved/Config/LinuxServer/GameUserSettings.ini"
+)
+# .pak mods drop into Pal/Content/Paks/~mods (created on demand).
+MODS_DIR = os.environ.get("MODS_DIR", f"{STEAM_DIR}/Pal/Content/Paks/~mods")
+# Friendly-name metadata for slots (guid -> {name, created}).
+SLOTS_META = os.environ.get("SLOTS_META", f"{STEAM_DIR}/Pal/Saved/palworld-slots.json")
+
+
+def _gce_project_id() -> str:
+    """Ask the GCE metadata server for this VM's project id (empty if off-GCE)."""
+    try:
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.read().decode().strip()
+    except (urllib.error.URLError, OSError):
+        return ""
+
+
+# GCS bucket for safety backups. Prefer the env var; otherwise derive
+# "<project>-palworld-backups" from metadata so no VM recreate is needed to
+# wire it up (matches the bucket name in main.tf).
+BACKUP_BUCKET = os.environ.get("BACKUP_BUCKET", "")
+if not BACKUP_BUCKET:
+    _proj = _gce_project_id()
+    BACKUP_BUCKET = f"{_proj}-palworld-backups" if _proj else ""
+
 OPTION_HEADER = "[/Script/Pal.PalGameWorldSettings]"
+GUS_HEADER = "[/Script/Pal.PalGameLocalSettings]"
 
 # ---------------------------------------------------------------------------
 # OptionSettings parsing / editing
@@ -227,6 +269,317 @@ def restart_service():
     )
 
 
+def stop_service():
+    subprocess.run(
+        ["systemctl", "stop", SERVICE_NAME], check=True, capture_output=True
+    )
+
+
+def start_service():
+    subprocess.run(
+        ["systemctl", "start", SERVICE_NAME], check=True, capture_output=True
+    )
+
+
+def _service_active() -> bool:
+    r = subprocess.run(
+        ["systemctl", "is-active", "--quiet", SERVICE_NAME]
+    )
+    return r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Save slots + mods (file manipulation)
+# ---------------------------------------------------------------------------
+
+
+def _chown_steam(path: str, recursive: bool = False):
+    """Give a path back to the steam user so PalServer can read/write it."""
+    try:
+        import pwd
+
+        pw = pwd.getpwnam(STEAM_USER)
+        if recursive:
+            for root, dirs, files in os.walk(path):
+                os.chown(root, pw.pw_uid, pw.pw_gid)
+                for n in dirs + files:
+                    try:
+                        os.chown(os.path.join(root, n), pw.pw_uid, pw.pw_gid)
+                    except OSError:
+                        pass
+        else:
+            os.chown(path, pw.pw_uid, pw.pw_gid)
+    except (KeyError, PermissionError, FileNotFoundError):
+        pass
+
+
+def _timestamp() -> str:
+    return time.strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def _safe_name(name: str) -> str:
+    """A friendly slot/mod name reduced to a filesystem-safe token."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", (name or "").strip())[:64]
+
+
+# ---- GameUserSettings.ini (picks the active world) ----
+
+
+def read_gus() -> str:
+    if os.path.exists(GUS_PATH):
+        with open(GUS_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+    return ""
+
+
+def write_gus(raw: str):
+    os.makedirs(os.path.dirname(GUS_PATH), exist_ok=True)
+    with open(GUS_PATH, "w", encoding="utf-8") as f:
+        f.write(raw)
+    _chown_steam(GUS_PATH)
+
+
+def get_active_world() -> str:
+    for line in read_gus().splitlines():
+        s = line.strip()
+        if s.startswith("DedicatedServerName="):
+            return s.split("=", 1)[1].strip()
+    return ""
+
+
+def set_active_world(guid: str):
+    """Point DedicatedServerName at `guid`, creating the section if needed."""
+    raw = read_gus()
+    line = f"DedicatedServerName={guid}"
+    if not raw.strip():
+        raw = GUS_HEADER + "\n" + line + "\n"
+    elif re.search(r"(?m)^\s*DedicatedServerName=.*$", raw):
+        raw = re.sub(r"(?m)^\s*DedicatedServerName=.*$", line, raw, count=1)
+    elif GUS_HEADER in raw:
+        raw = raw.replace(GUS_HEADER, GUS_HEADER + "\n" + line, 1)
+    else:
+        if not raw.endswith("\n"):
+            raw += "\n"
+        raw += GUS_HEADER + "\n" + line + "\n"
+    write_gus(raw)
+
+
+# ---- slot metadata (friendly names) ----
+
+
+def _load_slots_meta() -> dict:
+    if os.path.exists(SLOTS_META):
+        try:
+            with open(SLOTS_META, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_slots_meta(meta: dict):
+    os.makedirs(os.path.dirname(SLOTS_META), exist_ok=True)
+    with open(SLOTS_META, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    _chown_steam(SLOTS_META)
+
+
+def _dir_size(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for n in files:
+            try:
+                total += os.path.getsize(os.path.join(root, n))
+            except OSError:
+                pass
+    return total
+
+
+def list_slots() -> dict:
+    active = get_active_world()
+    meta = _load_slots_meta()
+    slots = []
+    guids = set()
+    if os.path.isdir(SAVEGAMES_DIR):
+        for entry in sorted(os.listdir(SAVEGAMES_DIR)):
+            full = os.path.join(SAVEGAMES_DIR, entry)
+            if not os.path.isdir(full) or entry.startswith("_"):
+                continue
+            guids.add(entry)
+            m = meta.get(entry, {})
+            slots.append(
+                {
+                    "guid": entry,
+                    "name": m.get("name", entry),
+                    "created": m.get("created"),
+                    "active": entry == active,
+                    "size": _dir_size(full),
+                    "empty": not os.listdir(full),
+                }
+            )
+    # An active world whose folder doesn't exist yet (fresh slot not booted).
+    if active and active not in guids:
+        m = meta.get(active, {})
+        slots.append(
+            {
+                "guid": active,
+                "name": m.get("name", active),
+                "created": m.get("created"),
+                "active": True,
+                "size": 0,
+                "empty": True,
+                "pending": True,
+            }
+        )
+    return {"active": active, "slots": slots}
+
+
+def create_slot(name: str) -> dict:
+    """Register a fresh world slot. Palworld fills it on next boot."""
+    guid = secrets.token_hex(16).upper()  # 32-char hex, matches Palworld's form
+    full = os.path.join(SAVEGAMES_DIR, guid)
+    os.makedirs(full, exist_ok=True)
+    _chown_steam(full, recursive=True)
+    meta = _load_slots_meta()
+    meta[guid] = {"name": _safe_name(name) or guid, "created": _timestamp()}
+    _save_slots_meta(meta)
+    return {"guid": guid, "name": meta[guid]["name"], "created": meta[guid]["created"]}
+
+
+def backup_world(guid: str, label: str = "manual") -> dict:
+    """Tar a world folder; upload to GCS (if configured) and keep a local copy."""
+    if not guid:
+        return {"backed_up": False, "error": "no active world"}
+    src = os.path.join(SAVEGAMES_DIR, guid)
+    if not os.path.isdir(src) or not os.listdir(src):
+        return {"backed_up": False, "error": "world folder missing/empty", "guid": guid}
+    fn = f"world-{guid}-{label}-{_timestamp()}.tar.gz"
+    tmp = os.path.join("/tmp", fn)
+    subprocess.run(
+        ["tar", "czf", tmp, "-C", SAVEGAMES_DIR, guid], check=True, capture_output=True
+    )
+    result = {"backed_up": True, "guid": guid, "file": fn}
+    # Local safety copy on the persistent data disk (last few kept).
+    local_dir = os.path.join(SAVEGAMES_DIR, "_slot_backups")
+    os.makedirs(local_dir, exist_ok=True)
+    shutil.copy2(tmp, os.path.join(local_dir, fn))
+    _chown_steam(local_dir, recursive=True)
+    result["local"] = os.path.join(local_dir, fn)
+    # Remote copy in GCS.
+    if BACKUP_BUCKET:
+        try:
+            subprocess.run(
+                ["gsutil", "cp", tmp, f"gs://{BACKUP_BUCKET}/slots/{fn}"],
+                check=True,
+                capture_output=True,
+            )
+            result["remote"] = f"gs://{BACKUP_BUCKET}/slots/{fn}"
+        except subprocess.CalledProcessError as e:
+            result["remote_error"] = (e.stderr or b"").decode()
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    return result
+
+
+def activate_slot(guid: str, restart: bool = True) -> dict:
+    """Safely switch the active world: stop, backup current, switch, start."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "error": "invalid guid"}
+    was_active = _service_active()
+    current = get_active_world()
+    if guid == current:
+        return {"ok": True, "active": guid, "note": "already active"}
+    # Stop the game so files settle before we touch the active pointer.
+    if was_active:
+        stop_service()
+    backup = backup_world(current, label="pre-switch") if current else {"backed_up": False}
+    set_active_world(guid)
+    started = False
+    if restart and was_active:
+        start_service()
+        started = True
+    return {"ok": True, "previous": current, "active": guid, "backup": backup, "restarted": started}
+
+
+def delete_slot(guid: str) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "error": "invalid guid"}
+    if guid == get_active_world():
+        return {"ok": False, "error": "cannot delete the active slot"}
+    full = os.path.join(SAVEGAMES_DIR, guid)
+    if not os.path.isdir(full):
+        return {"ok": False, "error": "not found"}
+    backup = backup_world(guid, label="pre-delete")
+    shutil.rmtree(full)
+    meta = _load_slots_meta()
+    meta.pop(guid, None)
+    _save_slots_meta(meta)
+    return {"ok": True, "deleted": guid, "backup": backup}
+
+
+# ---- mods (.pak into ~mods) ----
+
+
+def list_mods() -> dict:
+    mods = []
+    if os.path.isdir(MODS_DIR):
+        for n in sorted(os.listdir(MODS_DIR)):
+            full = os.path.join(MODS_DIR, n)
+            if os.path.isfile(full) and n.lower().endswith(".pak"):
+                mods.append({"name": n, "size": os.path.getsize(full)})
+    return {"dir": MODS_DIR, "mods": mods}
+
+
+def _mod_path(name: str) -> str | None:
+    safe = _safe_name(name)
+    if not safe.lower().endswith(".pak") or safe in (".pak",):
+        return None
+    return os.path.join(MODS_DIR, safe)
+
+
+def save_mod_bytes(name: str, data: bytes) -> dict:
+    dest = _mod_path(name)
+    if not dest:
+        return {"ok": False, "error": "name must be a safe *.pak filename"}
+    if not data:
+        return {"ok": False, "error": "empty upload"}
+    os.makedirs(MODS_DIR, exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(data)
+    _chown_steam(MODS_DIR, recursive=True)
+    return {"ok": True, "name": os.path.basename(dest), "size": len(data)}
+
+
+def install_mod_url(url: str, name: str = "") -> dict:
+    if not re.match(r"^https?://", url or ""):
+        return {"ok": False, "error": "url must be http(s)"}
+    fname = name or os.path.basename(url.split("?", 1)[0])
+    dest = _mod_path(fname)
+    if not dest:
+        return {"ok": False, "error": "resolved name is not a safe *.pak filename"}
+    os.makedirs(MODS_DIR, exist_ok=True)
+    req = urllib.request.Request(url, headers={"User-Agent": "palworld-panel"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = resp.read()
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        return {"ok": False, "error": f"download failed: {e}"}
+    with open(dest, "wb") as f:
+        f.write(data)
+    _chown_steam(MODS_DIR, recursive=True)
+    return {"ok": True, "name": os.path.basename(dest), "size": len(data)}
+
+
+def delete_mod(name: str) -> dict:
+    dest = _mod_path(name)
+    if not dest or not os.path.isfile(dest):
+        return {"ok": False, "error": "not found"}
+    os.remove(dest)
+    return {"ok": True, "deleted": os.path.basename(dest)}
+
+
 # ---------------------------------------------------------------------------
 # Palworld REST API proxy (stdlib urllib)
 # ---------------------------------------------------------------------------
@@ -283,7 +636,7 @@ def bootstrap():
 
 
 def build_app():
-    from fastapi import Depends, FastAPI, HTTPException, status
+    from fastapi import Depends, FastAPI, HTTPException, Request, status
     from fastapi.responses import HTMLResponse, JSONResponse
     from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
@@ -387,6 +740,67 @@ def build_app():
             raise HTTPException(404, "unknown endpoint")
         code, payload = rest_call("POST", endpoint, body or {})
         return JSONResponse(status_code=code, content=payload)
+
+    # ---- save slots ----
+
+    @app.get("/api/saves")
+    def saves_list(_: str = Depends(auth)):
+        return list_slots()
+
+    @app.post("/api/saves")
+    async def saves_create(payload: dict, _: str = Depends(auth)):
+        name = (payload or {}).get("name") or ""
+        return create_slot(name)
+
+    @app.post("/api/saves/{guid}/activate")
+    def saves_activate(guid: str, restart: bool = True, _: str = Depends(auth)):
+        r = activate_slot(guid, restart=restart)
+        return JSONResponse(status_code=200 if r.get("ok") else 400, content=r)
+
+    @app.post("/api/saves/{guid}/backup")
+    def saves_backup(guid: str, _: str = Depends(auth)):
+        r = backup_world(guid, label="manual")
+        return JSONResponse(status_code=200 if r.get("backed_up") else 400, content=r)
+
+    @app.delete("/api/saves/{guid}")
+    def saves_delete(guid: str, _: str = Depends(auth)):
+        r = delete_slot(guid)
+        return JSONResponse(status_code=200 if r.get("ok") else 400, content=r)
+
+    # ---- mods ----
+
+    @app.get("/api/mods")
+    def mods_list(_: str = Depends(auth)):
+        return list_mods()
+
+    @app.post("/api/mods/upload")
+    async def mods_upload(request: Request, name: str, restart: bool = False, _: str = Depends(auth)):
+        # Raw body upload (no python-multipart dependency).
+        data = await request.body()
+        r = save_mod_bytes(name, data)
+        if r.get("ok") and restart:
+            try:
+                restart_service()
+                r["restarted"] = True
+            except subprocess.CalledProcessError:
+                r["restarted"] = False
+        return JSONResponse(status_code=200 if r.get("ok") else 400, content=r)
+
+    @app.post("/api/mods/url")
+    def mods_url(payload: dict, restart: bool = False, _: str = Depends(auth)):
+        r = install_mod_url((payload or {}).get("url", ""), (payload or {}).get("name", ""))
+        if r.get("ok") and restart:
+            try:
+                restart_service()
+                r["restarted"] = True
+            except subprocess.CalledProcessError:
+                r["restarted"] = False
+        return JSONResponse(status_code=200 if r.get("ok") else 400, content=r)
+
+    @app.delete("/api/mods/{name}")
+    def mods_delete(name: str, _: str = Depends(auth)):
+        r = delete_mod(name)
+        return JSONResponse(status_code=200 if r.get("ok") else 400, content=r)
 
     return app
 

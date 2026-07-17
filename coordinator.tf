@@ -111,8 +111,8 @@ resource "google_cloudfunctions2_function" "coordinator" {
   }
 
   service_config {
-    available_memory      = "256M"
-    timeout_seconds       = 60
+    available_memory      = "512M"
+    timeout_seconds       = 300
     min_instance_count    = 0
     max_instance_count    = 2
     ingress_settings      = "ALLOW_ALL"

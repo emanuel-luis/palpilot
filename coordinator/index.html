@@ -190,6 +190,63 @@
         </div>
       </section>
 
+      <!-- SAVES -->
+      <section v-if="tab==='saves'">
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Ligue o servidor para gerenciar os saves.</span></div>
+        <template v-else>
+          <div class="card">
+            <h2>Novo slot de save</h2>
+            <p class="muted">Cria um mundo novo e vazio. Ative-o para o servidor rodar nele (o mundo atual fica guardado e intacto).</p>
+            <div class="row"><input v-model="newSlotName" placeholder="Nome do slot (ex: Temporada 2)">
+              <button class="btn" :disabled="savesBusy" @click="createSlot">Criar slot</button></div>
+          </div>
+          <div class="card">
+            <h2>Saves ({{ saves.slots.length }})</h2>
+            <p class="muted">O slot ativo é o mundo que o jogo executa. Trocar faz save + backup + restart automaticamente.</p>
+            <table><thead><tr><th>Nome</th><th>GUID</th><th>Tamanho</th><th></th></tr></thead><tbody>
+              <tr v-for="s in saves.slots" :key="s.guid">
+                <td>{{ s.name }}<span class="badge" v-if="s.active" style="color:var(--ok);border-color:var(--ok);margin-left:6px">ativo</span>
+                  <span class="badge" v-if="s.empty">vazio</span></td>
+                <td class="mono">{{ s.guid }}</td>
+                <td>{{ fmtSize(s.size) }}</td>
+                <td style="text-align:right;white-space:nowrap">
+                  <button class="btn ok" v-if="!s.active" :disabled="savesBusy" @click="activateSlot(s)">Ativar</button>
+                  <button class="btn ghost" :disabled="savesBusy||s.empty" @click="backupSlot(s)">Backup</button>
+                  <button class="btn danger" :disabled="savesBusy||s.active" @click="deleteSlot(s)">Excluir</button></td></tr>
+              <tr v-if="!saves.slots.length"><td colspan="4" class="muted">Nenhum save encontrado</td></tr>
+            </tbody></table>
+          </div>
+        </template>
+      </section>
+
+      <!-- MODS -->
+      <section v-if="tab==='mods'">
+        <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Ligue o servidor para gerenciar mods.</span></div>
+        <template v-else>
+          <div class="card">
+            <h2>Instalar mod (.pak)</h2>
+            <p class="muted">Mods .pak vão para <span class="mono">Pal/Content/Paks/~mods</span>. Reinicie o servidor para aplicar. UE4SS/Lua no Linux é experimental.</p>
+            <label>Por URL</label>
+            <div class="row"><input v-model="modUrl" placeholder="https://…/mod.pak">
+              <input v-model="modUrlName" placeholder="nome.pak (opcional)" style="max-width:200px">
+              <button class="btn" :disabled="modsBusy" @click="installModUrl">Baixar</button></div>
+            <label style="margin-top:12px">Por upload (até ~30 MB)</label>
+            <div class="row"><input type="file" accept=".pak" @change="pickModFile">
+              <button class="btn" :disabled="modsBusy" @click="uploadMod">Enviar</button></div>
+          </div>
+          <div class="card">
+            <h2>Mods instalados ({{ mods.mods.length }})</h2>
+            <table><thead><tr><th>Arquivo</th><th>Tamanho</th><th></th></tr></thead><tbody>
+              <tr v-for="m in mods.mods" :key="m.name">
+                <td class="mono">{{ m.name }}</td><td>{{ fmtSize(m.size) }}</td>
+                <td style="text-align:right"><button class="btn danger" :disabled="modsBusy" @click="deleteMod(m)">Remover</button></td></tr>
+              <tr v-if="!mods.mods.length"><td colspan="3" class="muted">Nenhum mod</td></tr>
+            </tbody></table>
+            <div class="row end" style="margin-top:12px"><button class="btn ghost" @click="restartServer">↻ Reiniciar servidor (aplicar mods)</button></div>
+          </div>
+        </template>
+      </section>
+
       <!-- COMMANDS -->
       <section v-if="tab==='commands'">
         <div class="card" v-if="vm.status!=='RUNNING'"><span class="muted">Servidor desligado.</span></div>
@@ -290,6 +347,8 @@ const SECTIONS=[
 const TABS=[
   {id:'status',label:'Status',perm:'view'},
   {id:'config',label:'Configurações',perm:'config'},
+  {id:'saves',label:'Saves',perm:'config'},
+  {id:'mods',label:'Mods',perm:'config'},
   {id:'commands',label:'Comandos',perm:'commands'},
   {id:'watchdog',label:'Watchdog',perm:'config'},
   {id:'users',label:'Usuários',perm:'users'},
@@ -304,6 +363,8 @@ Vue.createApp({
     cfgModel:[], cfgOrig:{}, cfgRaw:'', cfgPath:'', cfgSearch:'', cfgRestart:false,
     ann:'', modUser:'', modMsg:'', shWait:30, shMsg:'',
     wd:{poll_seconds:60,grace_seconds:1800},
+    saves:{active:'',slots:[]}, newSlotName:'', savesBusy:false,
+    mods:{dir:'',mods:[]}, modUrl:'', modUrlName:'', modFile:null, modsBusy:false,
     users:[], allPerms:['view','power','config','commands','users'],
     userForm:{username:'',password:'',perms:['view'],editing:false},
     permLabels:PERM_LABELS, enums:ENUMS,
@@ -365,7 +426,8 @@ Vue.createApp({
       this.refresh();
       if(!this._timer)this._timer=setInterval(this.pollOverview,8000);
     },
-    go(id){this.tab=id;if(id==='config')this.loadConfig();if(id==='users')this.loadUsers();if(id==='watchdog')this.loadWatchdog();},
+    go(id){this.tab=id;if(id==='config')this.loadConfig();if(id==='users')this.loadUsers();if(id==='watchdog')this.loadWatchdog();if(id==='saves')this.loadSaves();if(id==='mods')this.loadMods();},
+    fmtSize(b){if(b==null)return'';const u=['B','KB','MB','GB'];let i=0,n=b;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];},
     refresh(){this.pollOverview();if(this.tab==='config')this.loadConfig();},
     async pollOverview(){
       const r=await this.api('GET','/api/overview');
@@ -404,6 +466,86 @@ Vue.createApp({
     async saveWatchdog(){
       const r=await this.api('POST','/api/watchdog',{poll_seconds:this.wd.poll_seconds,grace_seconds:this.wd.grace_seconds});
       this.notify(r.ok?'Watchdog atualizado':('Falha: '+(r.data.error||r.status)),r.ok);
+    },
+    // ---- save slots ----
+    async loadSaves(){
+      if(this.vm.status!=='RUNNING'){this.saves={active:'',slots:[]};return;}
+      const r=await this.api('GET','/api/saves');
+      if(r.ok)this.saves=r.data;else this.notify('Falha ao listar saves',false);
+    },
+    async createSlot(){
+      const name=this.newSlotName.trim();
+      if(!name){this.notify('Informe um nome',false);return;}
+      this.savesBusy=true;
+      const r=await this.api('POST','/api/saves',{name});
+      this.savesBusy=false;
+      if(r.ok){this.notify('Slot criado: '+r.data.name+' — ative para começar um mundo novo');this.newSlotName='';this.loadSaves();}
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    async activateSlot(s){
+      if(!confirm('Ativar "'+s.name+'"? O servidor será salvo, backupeado e reiniciado neste mundo.'))return;
+      this.savesBusy=true;
+      this.notify('Salvando + backup + trocando mundo… pode levar ~1min');
+      const r=await this.api('POST','/api/saves/'+encodeURIComponent(s.guid)+'/activate?restart=true',{});
+      this.savesBusy=false;
+      if(r.ok){this.notify('Mundo ativo: '+s.name+(r.data.restarted?' (reiniciado)':''));setTimeout(this.loadSaves,2000);}
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    async backupSlot(s){
+      this.savesBusy=true;
+      const r=await this.api('POST','/api/saves/'+encodeURIComponent(s.guid)+'/backup',{});
+      this.savesBusy=false;
+      if(r.ok)this.notify('Backup: '+(r.data.remote||r.data.local||r.data.file));
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    async deleteSlot(s){
+      if(!confirm('Excluir slot "'+s.name+'"? Um backup será feito antes.'))return;
+      this.savesBusy=true;
+      const r=await this.api('DELETE','/api/saves/'+encodeURIComponent(s.guid));
+      this.savesBusy=false;
+      if(r.ok){this.notify('Excluído (backup salvo)');this.loadSaves();}
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    // ---- mods ----
+    async loadMods(){
+      if(this.vm.status!=='RUNNING'){this.mods={dir:'',mods:[]};return;}
+      const r=await this.api('GET','/api/mods');
+      if(r.ok)this.mods=r.data;else this.notify('Falha ao listar mods',false);
+    },
+    async installModUrl(){
+      const url=this.modUrl.trim();
+      if(!url){this.notify('Informe a URL do .pak',false);return;}
+      this.modsBusy=true;
+      const r=await this.api('POST','/api/mods/url?restart=false',{url,name:this.modUrlName.trim()});
+      this.modsBusy=false;
+      if(r.ok){this.notify('Mod instalado: '+r.data.name+' — reinicie para aplicar');this.modUrl='';this.modUrlName='';this.loadMods();}
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    pickModFile(e){this.modFile=e.target.files[0]||null;},
+    async uploadMod(){
+      const f=this.modFile;
+      if(!f){this.notify('Escolha um arquivo .pak',false);return;}
+      if(!f.name.toLowerCase().endsWith('.pak')){this.notify('Só arquivos .pak',false);return;}
+      this.modsBusy=true;
+      const r=await fetch(API+'/api/mods/upload?name='+encodeURIComponent(f.name)+'&restart=false',
+        {method:'POST',headers:{Authorization:'Basic '+this.auth,'Content-Type':'application/octet-stream'},body:f});
+      let data;try{data=await r.json();}catch{data={};}
+      this.modsBusy=false;
+      if(r.ok){this.notify('Enviado: '+data.name+' — reinicie para aplicar');this.modFile=null;this.loadMods();}
+      else this.notify('Falha ('+r.status+'): '+(data.error||''),false);
+    },
+    async deleteMod(m){
+      if(!confirm('Remover mod "'+m.name+'"?'))return;
+      this.modsBusy=true;
+      const r=await this.api('DELETE','/api/mods/'+encodeURIComponent(m.name));
+      this.modsBusy=false;
+      if(r.ok){this.notify('Removido');this.loadMods();}
+      else this.notify('Falha: '+(r.data.error||r.status),false);
+    },
+    async restartServer(){
+      if(!confirm('Reiniciar o servidor Palworld para aplicar mudanças?'))return;
+      const r=await this.api('POST','/api/restart',{});
+      this.notify(r.ok?'Reiniciando…':'Falha ao reiniciar',r.ok);
     },
     async loadUsers(){
       const r=await this.api('GET','/api/users');
