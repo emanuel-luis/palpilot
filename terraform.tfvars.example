@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars and fill in. NEVER commit terraform.tfvars
+# (it holds plaintext secrets and is gitignored). Keep it out of any
+# cloud-synced folder, or use a remote state backend.
+
+# --- required ---
+project_id = "your-gcp-project-id"
+region     = "southamerica-east1"
+zone       = "southamerica-east1-a"
+
+# --- credentials (choose strong values) ---
+panel_password = "CHANGE-ME-panel-login"      # admin panel login
+admin_password = "CHANGE-ME-palworld-admin"   # Palworld REST/in-game admin password
+internal_token = "CHANGE-ME-random-hex"       # shared secret: watchdog + coordinator->panel RBAC signing
+
+# --- optional (defaults shown) ---
+# panel_port         = 8080
+# panel_user         = "admin"
+# rest_api_port      = 8212
+# idle_poll_seconds  = 60      # how often the watchdog checks for players
+# idle_grace_seconds = 1800    # power off after this long empty
+
+# --- security / ops (safe defaults; opt in when ready) ---
+# panel_allowed_cidrs        = ["0.0.0.0/0"]   # RISK: restrict once coordinator egress path is decided (plan §9)
+# ssh_admin_cidrs            = []               # extra CIDRs for the restricted SSH rule (IAP range is always allowed)
+# enable_secret_manager      = false           # true = fetch secrets from Secret Manager instead of instance metadata (needs VM recreate)
+# enable_monitoring          = true            # uptime check + alert policy on the coordinator
+# notification_channel_email = ""              # email for the alert policy; empty = alert exists but nobody is paged
