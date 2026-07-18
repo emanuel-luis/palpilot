@@ -154,9 +154,62 @@ def _load(name, seed):
     return data
 
 
-def _store(name, data):
-    _blob(name).upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+def _store(name, data, if_generation_match=None):
+    blob = _blob(name)
+    kwargs = {} if if_generation_match is None else {"if_generation_match": if_generation_match}
+    blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json", **kwargs)
     _cache[name] = {"data": data, "ts": time.time()}
+
+
+def _load_versioned(name, seed):
+    """Read a GCS-JSON doc plus its current generation, bypassing the read cache
+    (for read-modify-write). Returns (data, generation)."""
+    blob = _blob(name)
+    if blob.exists():
+        data = json.loads(blob.download_as_text())
+    else:
+        data = seed()
+        blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+    blob.reload()  # ensure blob.generation reflects the just-read object
+    _cache[name] = {"data": data, "ts": time.time()}
+    return data, blob.generation
+
+
+def _update(name, seed, mutate, attempts=6):
+    """Optimistic-concurrency read-modify-write on a GCS-JSON doc.
+
+    `mutate(data)` edits `data` in place and returns (commit: bool, result). On
+    commit, the write asserts the generation that was read; a concurrent writer
+    (generation mismatch) triggers a reload + re-run of `mutate`, so no edit is
+    silently lost. `commit=False` skips the write (validation failures) and
+    returns `result` immediately."""
+    from google.api_core.exceptions import PreconditionFailed
+
+    for _ in range(attempts):
+        data, gen = _load_versioned(name, seed)
+        data = json.loads(json.dumps(data))  # deep copy to mutate
+        commit, result = mutate(data)
+        if not commit:
+            return result
+        try:
+            _store(name, data, if_generation_match=gen)
+            return result
+        except PreconditionFailed:
+            continue
+    return _err("conflict: concurrent update, please retry", 409)
+
+
+# Seed factories, shared by _load_* (cached reads) and _update (versioned writes).
+def _seed_users():
+    return {"users": {PANEL_USER: _new_user(PANEL_PASSWORD, list(PERMS), role="owner")}}
+
+
+def _seed_roles():
+    return {"roles": {k: dict(v) for k, v in BUILTIN_ROLES.items()}}
+
+
+def _seed_wd():
+    return {"poll_seconds": IDLE_POLL_DEFAULT, "grace_seconds": IDLE_GRACE_DEFAULT}
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +234,7 @@ def _expand_perms(perms):
 
 
 def _load_roles():
-    return _load(ROLES_OBJECT, lambda: {"roles": {k: dict(v) for k, v in BUILTIN_ROLES.items()}})
+    return _load(ROLES_OBJECT, _seed_roles)
 
 
 def _effective_perms(rec):
@@ -225,7 +278,7 @@ def _new_user(password, perms, iterations=PBKDF2_ITERATIONS, role="custom"):
 def _load_users():
     return _load(
         USERS_OBJECT,
-        lambda: {"users": {PANEL_USER: _new_user(PANEL_PASSWORD, list(PERMS), role="owner")}},
+        _seed_users,
     )
 
 
@@ -282,15 +335,17 @@ def _rehash_user(username, password):
     password reset. This is a transparent migration, not a security event, so
     it must NOT bump "ver" (that would silently invalidate live sessions).
     """
-    try:
-        data = json.loads(json.dumps(_load_users()))
+    def mutate(data):
         rec = data.get("users", {}).get(username)
         if not rec:
-            return
+            return False, None
         new_fields = _new_user(password, rec.get("perms", []), role=rec.get("role", "custom"))
         new_fields["ver"] = rec.get("ver", 0)
         rec.update(new_fields)
-        _store(USERS_OBJECT, data)
+        return True, None
+
+    try:
+        _update(USERS_OBJECT, _seed_users, mutate)
     except Exception as e:  # noqa: BLE001
         print(f"password re-hash failed for user {username!r}: {e}")
 
@@ -417,10 +472,7 @@ def _authenticate(request):
 
 
 def _load_wd():
-    return _load(
-        WD_OBJECT,
-        lambda: {"poll_seconds": IDLE_POLL_DEFAULT, "grace_seconds": IDLE_GRACE_DEFAULT},
-    )
+    return _load(WD_OBJECT, _seed_wd)
 
 
 # ---------------------------------------------------------------------------
@@ -571,13 +623,15 @@ def _h_logout(request, user, path, method):
 
 def _h_logout_all(request, user, path, method):
     """Bump the caller's users.json "ver", invalidating every outstanding token."""
-    data = json.loads(json.dumps(_load_users()))
-    rec = data.get("users", {}).get(user["name"])
-    if not rec:
-        return _err("user not found", 404)
-    rec["ver"] = rec.get("ver", 0) + 1
-    _store(USERS_OBJECT, data)
-    return _ok({"ver": rec["ver"]})
+
+    def mutate(data):
+        rec = data.get("users", {}).get(user["name"])
+        if not rec:
+            return False, _err("user not found", 404)
+        rec["ver"] = rec.get("ver", 0) + 1
+        return True, _ok({"ver": rec["ver"]})
+
+    return _update(USERS_OBJECT, _seed_users, mutate)
 
 
 def _h_account_password(request, user, path, method):
@@ -589,15 +643,17 @@ def _h_account_password(request, user, path, method):
         return _err("new password must be at least 8 characters", 400)
     if not _check_password(user["name"], old):
         return _err("current password is incorrect", 401)
-    data = json.loads(json.dumps(_load_users()))
-    rec = data.get("users", {}).get(user["name"])
-    if not rec:
-        return _err("user not found", 404)
-    new_fields = _new_user(new, rec.get("perms", []), role=rec.get("role", "custom"))
-    new_fields["ver"] = rec.get("ver", 0) + 1  # bump: invalidate every outstanding token
-    rec.update(new_fields)
-    _store(USERS_OBJECT, data)
-    return _ok({"ver": rec["ver"]})
+
+    def mutate(data):
+        rec = data.get("users", {}).get(user["name"])
+        if not rec:
+            return False, _err("user not found", 404)
+        new_fields = _new_user(new, rec.get("perms", []), role=rec.get("role", "custom"))
+        new_fields["ver"] = rec.get("ver", 0) + 1  # bump: invalidate every outstanding token
+        rec.update(new_fields)
+        return True, _ok({"ver": rec["ver"]})
+
+    return _update(USERS_OBJECT, _seed_users, mutate)
 
 
 def _h_overview(request, user, path, method):
@@ -632,8 +688,13 @@ def _h_watchdog_post(request, user, path, method):
     if not (60 <= grace <= 86400):
         return _err("grace_seconds must be 60..86400", 400)
     cfg = {"poll_seconds": poll, "grace_seconds": grace}
-    _store(WD_OBJECT, cfg)
-    return _ok(cfg)
+
+    def mutate(data):
+        data.clear()
+        data.update(cfg)  # watchdog config is a whole-value replace
+        return True, _ok(cfg)
+
+    return _update(WD_OBJECT, _seed_wd, mutate)
 
 
 def _h_users(request, user, path, method):
@@ -790,13 +851,9 @@ def coordinator(request):
 
 
 def _handle_users(request, method, path):
-    data = _load_users()
-    # force a fresh copy so cache TTL doesn't hide concurrent edits
-    data = json.loads(json.dumps(data))
-    users = data.setdefault("users", {})
-    roles = _load_roles().get("roles", {})
-
     if method == "GET":
+        data = _load_users()
+        roles = _load_roles().get("roles", {})
         return _ok({"users": _users_public(data), "all_perms": PERMS, "roles": list(roles.keys())})
 
     if method == "POST":
@@ -806,6 +863,7 @@ def _handle_users(request, method, path):
         if not username:
             return _err("username required", 400)
 
+        roles = _load_roles().get("roles", {})
         role_given = "role" in body
         role = ((body.get("role") or "custom").strip() or "custom") if role_given else None
         if role and role != "custom" and role not in roles:
@@ -814,38 +872,44 @@ def _handle_users(request, method, path):
         perms_given = "perms" in body
         perms = [p for p in (body.get("perms") or []) if p in PERMS] if perms_given else None
 
-        if username in users:
-            existing = users[username]
-            new_role = role if role_given else existing.get("role", "custom")
-            new_perms = perms if perms_given else existing.get("perms", [])
-            existing["role"] = new_role
-            existing["perms"] = new_perms
-            if password:
-                new_fields = _new_user(password, new_perms, role=new_role)
-                new_fields["ver"] = existing.get("ver", 0) + 1  # bump, don't reset to 0
-                users[username] = {**existing, **new_fields}
-        else:
-            if not password:
-                return _err("password required for new user", 400)
-            new_role = role if role_given else "custom"
-            new_perms = perms if perms_given else []
-            users[username] = _new_user(password, new_perms, role=new_role)
+        def mutate(data):
+            users = data.setdefault("users", {})
+            if username in users:
+                existing = users[username]
+                new_role = role if role_given else existing.get("role", "custom")
+                new_perms = perms if perms_given else existing.get("perms", [])
+                existing["role"] = new_role
+                existing["perms"] = new_perms
+                if password:
+                    nf = _new_user(password, new_perms, role=new_role)
+                    nf["ver"] = existing.get("ver", 0) + 1  # bump, don't reset to 0
+                    users[username] = {**existing, **nf}
+            else:
+                if not password:
+                    return False, _err("password required for new user", 400)
+                new_role = role if role_given else "custom"
+                new_perms = perms if perms_given else []
+                users[username] = _new_user(password, new_perms, role=new_role)
+            if not any("users" in _effective_perms(r) for r in users.values()):
+                return False, _err("at least one user must keep the 'users' permission", 400)
+            return True, _ok({"users": _users_public(data)})
 
-        if not any("users" in _effective_perms(r) for r in users.values()):
-            return _err("at least one user must keep the 'users' permission", 400)
-        _store(USERS_OBJECT, data)
-        return _ok({"users": _users_public(data)})
+        return _update(USERS_OBJECT, _seed_users, mutate)
 
     if method == "DELETE":
         username = path.split("/api/users/", 1)[1] if "/api/users/" in path else ""
-        if username not in users:
-            return _err("not found", 404)
-        remaining = {u: r for u, r in users.items() if u != username}
-        if not any("users" in _effective_perms(r) for r in remaining.values()):
-            return _err("cannot delete the last user manager", 400)
-        del users[username]
-        _store(USERS_OBJECT, data)
-        return _ok({"users": _users_public(data)})
+
+        def mutate(data):
+            users = data.setdefault("users", {})
+            if username not in users:
+                return False, _err("not found", 404)
+            remaining = {u: r for u, r in users.items() if u != username}
+            if not any("users" in _effective_perms(r) for r in remaining.values()):
+                return False, _err("cannot delete the last user manager", 400)
+            del users[username]
+            return True, _ok({"users": _users_public(data)})
+
+        return _update(USERS_OBJECT, _seed_users, mutate)
 
     return _err("method not allowed", 405)
 
@@ -858,16 +922,15 @@ def _roles_public(roles):
 
 
 def _handle_roles(request, method, path):
-    data = _load_roles()
-    # force a fresh copy so cache TTL doesn't hide concurrent edits
-    data = json.loads(json.dumps(data))
-    roles = data.setdefault("roles", {})
-    # backfill any builtin that predates this deploy / was missing from the seed
-    for name, r in BUILTIN_ROLES.items():
-        roles.setdefault(name, dict(r))
+    def _with_builtins(data):
+        roles = data.setdefault("roles", {})
+        # backfill any builtin missing from the stored doc
+        for bn, br in BUILTIN_ROLES.items():
+            roles.setdefault(bn, dict(br))
+        return roles
 
     if method == "GET":
-        return _ok({"roles": _roles_public(roles), "all_perms": PERMS})
+        return _ok({"roles": _roles_public(_with_builtins(dict(_load_roles()))), "all_perms": PERMS})
 
     if method == "POST":
         body = request.get_json(silent=True) or {}
@@ -880,24 +943,32 @@ def _handle_roles(request, method, path):
             # could never take effect. Reject it (matches the frontend guard).
             return _err('"custom" is a reserved role name', 400)
         perms = [p for p in (body.get("perms") or []) if p in PERMS]
-        existing = roles.get(name)
-        builtin = bool(existing.get("builtin")) if existing else False
-        roles[name] = {"perms": perms, "builtin": builtin}
-        _store(ROLES_OBJECT, data)
-        return _ok({"roles": _roles_public(roles)})
+
+        def mutate(data):
+            roles = _with_builtins(data)
+            builtin = bool(roles.get(name, {}).get("builtin"))
+            roles[name] = {"perms": perms, "builtin": builtin}
+            return True, _ok({"roles": _roles_public(roles)})
+
+        return _update(ROLES_OBJECT, _seed_roles, mutate)
 
     if method == "DELETE":
         name = path.split("/api/roles/", 1)[1] if "/api/roles/" in path else ""
-        role = roles.get(name)
-        if not role:
-            return _err("not found", 404)
-        if role.get("builtin"):
-            return _err("cannot delete a built-in role", 400)
-        users_data = _load_users().get("users", {})
-        if any(r.get("role") == name for r in users_data.values()):
-            return _err("cannot delete a role while a user still holds it", 400)
-        del roles[name]
-        _store(ROLES_OBJECT, data)
-        return _ok({"roles": _roles_public(roles)})
+        # role-in-use check reads a different doc (users) — do it up front.
+        in_use = any(r.get("role") == name for r in _load_users().get("users", {}).values())
+
+        def mutate(data):
+            roles = _with_builtins(data)
+            role = roles.get(name)
+            if not role:
+                return False, _err("not found", 404)
+            if role.get("builtin"):
+                return False, _err("cannot delete a built-in role", 400)
+            if in_use:
+                return False, _err("cannot delete a role while a user still holds it", 400)
+            del roles[name]
+            return True, _ok({"roles": _roles_public(roles)})
+
+        return _update(ROLES_OBJECT, _seed_roles, mutate)
 
     return _err("method not allowed", 405)
