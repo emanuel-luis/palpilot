@@ -33,26 +33,28 @@ defineProps({
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 18px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
 }
 .card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .card-title {
   margin: 0;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 .card-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--muted);
+  font-weight: 400;
 }
 .card-actions {
   display: flex;

@@ -36,7 +36,12 @@ function keyFor(row, rowKey) {
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="keyFor(row, rowKey)">
-          <td v-for="col in columns" :key="col.key" :style="{ textAlign: col.align || 'left' }">
+          <td
+            v-for="col in columns"
+            :key="col.key"
+            :class="{ num: col.align === 'right' }"
+            :style="{ textAlign: col.align || 'left' }"
+          >
             <slot :name="`cell-${col.key}`" :row="row" :value="row[col.key]">{{ row[col.key] }}</slot>
           </td>
         </tr>
@@ -58,15 +63,35 @@ function keyFor(row, rowKey) {
 }
 .data-table th,
 .data-table td {
-  padding: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   border-bottom: 1px solid var(--border);
 }
-.data-table th {
-  color: var(--muted);
-  font-weight: 500;
+.data-table tbody tr {
+  transition: background 0.1s ease;
+}
+.data-table tbody tr:hover {
+  background: var(--panel-2);
+}
+.data-table td.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .empty-row {
   text-align: center;
-  padding: 16px 8px;
+  padding: 20px 8px;
+  color: var(--muted);
 }
 </style>
