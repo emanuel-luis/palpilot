@@ -19,6 +19,11 @@ import Field from "../components/ui/Field.vue";
 import { useConfirm } from "../components/ui/useConfirm.js";
 import { useToast } from "../components/ui/useToast.js";
 import { useServerStore } from "../stores/server.js";
+import { SETTINGS_META, easeHint } from "../settingsMeta.js";
+
+function meta(key) {
+  return SETTINGS_META[key] || null;
+}
 
 const { t } = useI18n();
 const server = useServerStore();
@@ -216,7 +221,13 @@ async function resetConfig() {
           <template v-for="it in g.items" :key="it.key">
             <label v-if="it.type === 'boolean'" class="switch" :for="'cfg-' + it.key">
               <input :id="'cfg-' + it.key" v-model="it.value" type="checkbox" />
-              <span>{{ human(it.key) }}<br /><span class="muted key-hint">{{ it.key }}</span></span>
+              <span>
+                {{ human(it.key) }}<br /><span class="muted key-hint">{{ it.key }}</span>
+                <span v-if="meta(it.key)" class="setting-desc">
+                  {{ meta(it.key).desc }}
+                  <span v-if="easeHint(meta(it.key).ease)" class="ease">{{ easeHint(meta(it.key).ease) }}</span>
+                </span>
+              </span>
             </label>
             <div v-else class="field">
               <label :for="'cfg-' + it.key">{{ human(it.key) }}<br /><span class="muted key-hint">{{ it.key }}</span></label>
@@ -231,6 +242,10 @@ async function resetConfig() {
                 step="any"
               />
               <input v-else :id="'cfg-' + it.key" v-model="it.value" :type="isSecret(it.key) ? 'password' : 'text'" />
+              <p v-if="meta(it.key)" class="setting-desc">
+                {{ meta(it.key).desc }}
+                <span v-if="easeHint(meta(it.key).ease)" class="ease">{{ easeHint(meta(it.key).ease) }}</span>
+              </p>
             </div>
           </template>
         </div>
@@ -296,6 +311,25 @@ async function resetConfig() {
 }
 .key-hint {
   font-size: 10px;
+}
+.setting-desc {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.ease {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .switch {
   display: flex;
