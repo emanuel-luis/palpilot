@@ -24,6 +24,9 @@ import { SETTINGS_META, easeHint } from "../settingsMeta.js";
 function meta(key) {
   return SETTINGS_META[key] || null;
 }
+function label(key) {
+  return meta(key)?.label || human(key);
+}
 
 const { t } = useI18n();
 const server = useServerStore();
@@ -219,18 +222,42 @@ async function resetConfig() {
         <summary>{{ g.title }}<span class="count">{{ g.items.length }}</span></summary>
         <div class="grid">
           <template v-for="it in g.items" :key="it.key">
-            <label v-if="it.type === 'boolean'" class="switch" :for="'cfg-' + it.key">
-              <input :id="'cfg-' + it.key" v-model="it.value" type="checkbox" />
-              <span>
-                {{ human(it.key) }}<br /><span class="muted key-hint">{{ it.key }}</span>
-                <span v-if="meta(it.key)" class="setting-desc">
+            <div v-if="it.type === 'boolean'" class="field switch-field">
+              <label class="switch" :for="'cfg-' + it.key">
+                <input :id="'cfg-' + it.key" v-model="it.value" type="checkbox" />
+                <span class="field-name">{{ label(it.key) }}</span>
+              </label>
+              <span
+                v-if="meta(it.key)"
+                class="info"
+                tabindex="0"
+                role="button"
+                :aria-label="'What ' + label(it.key) + ' does'"
+              >
+                i
+                <span class="info-card" role="tooltip">
                   {{ meta(it.key).desc }}
                   <span v-if="easeHint(meta(it.key).ease)" class="ease">{{ easeHint(meta(it.key).ease) }}</span>
                 </span>
               </span>
-            </label>
+            </div>
             <div v-else class="field">
-              <label :for="'cfg-' + it.key">{{ human(it.key) }}<br /><span class="muted key-hint">{{ it.key }}</span></label>
+              <div class="field-label">
+                <label :for="'cfg-' + it.key" class="field-name">{{ label(it.key) }}</label>
+                <span
+                  v-if="meta(it.key)"
+                  class="info"
+                  tabindex="0"
+                  role="button"
+                  :aria-label="'What ' + label(it.key) + ' does'"
+                >
+                  i
+                  <span class="info-card" role="tooltip">
+                    {{ meta(it.key).desc }}
+                    <span v-if="easeHint(meta(it.key).ease)" class="ease">{{ easeHint(meta(it.key).ease) }}</span>
+                  </span>
+                </span>
+              </div>
               <select v-if="ENUMS[it.key]" :id="'cfg-' + it.key" v-model="it.value">
                 <option v-for="o in ENUMS[it.key]" :key="o" :value="o">{{ o }}</option>
               </select>
@@ -242,10 +269,6 @@ async function resetConfig() {
                 step="any"
               />
               <input v-else :id="'cfg-' + it.key" v-model="it.value" :type="isSecret(it.key) ? 'password' : 'text'" />
-              <p v-if="meta(it.key)" class="setting-desc">
-                {{ meta(it.key).desc }}
-                <span v-if="easeHint(meta(it.key).ease)" class="ease">{{ easeHint(meta(it.key).ease) }}</span>
-              </p>
             </div>
           </template>
         </div>
@@ -303,43 +326,98 @@ async function resetConfig() {
   gap: 12px;
   margin-top: 12px;
 }
-.field label,
-.switch span {
-  display: block;
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.field-name {
   font-size: 12px;
-  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--text);
 }
-.key-hint {
+/* boolean rows: toggle on the left, info icon on the right */
+.switch-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.switch input {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+/* hover info card */
+.info {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--muted);
   font-size: 10px;
+  font-weight: 700;
+  font-style: italic;
+  cursor: help;
 }
-.setting-desc {
-  display: block;
-  margin: 6px 0 0;
+.info:hover,
+.info:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+.info-card {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  max-width: 70vw;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 10px 12px;
   font-size: 12px;
   font-weight: 400;
-  line-height: 1.4;
-  color: var(--muted);
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--text);
+  text-align: left;
+  z-index: 30;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+.info:hover .info-card,
+.info:focus-within .info-card {
+  opacity: 1;
+  visibility: visible;
 }
 .ease {
   display: inline-block;
-  margin-left: 6px;
-  padding: 1px 7px;
+  margin-top: 6px;
+  padding: 1px 8px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-}
-.switch {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  cursor: pointer;
-}
-.switch input {
-  width: auto;
-  margin-top: 3px;
 }
 .row {
   display: flex;
