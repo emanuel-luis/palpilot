@@ -508,6 +508,25 @@ def copy_slot_config(src_guid: str, dst_guid: str) -> None:
         _chown_steam(_slot_config_path(dst_guid))
 
 
+def reset_config() -> str:
+    """Reset PalWorldSettings.ini to defaults for the active save.
+
+    Uses DefaultPalWorldSettings.ini if present, else an empty OptionSettings
+    block (Palworld then falls back to its built-in defaults). REST/admin keys
+    are re-asserted by bootstrap() so the panel<->game link survives, and the
+    reset is snapshotted to the active slot (settings are per-save). Returns the
+    resulting raw ini. A game restart is still required to apply it in-world."""
+    if os.path.exists(DEFAULT_INI_PATH):
+        with open(DEFAULT_INI_PATH, "r", encoding="utf-8") as f:
+            raw = f.read()
+    else:
+        raw = OPTION_HEADER + "\nOptionSettings=()\n"
+    write_ini(raw)
+    bootstrap()  # force RESTAPIEnabled/RESTAPIPort/AdminPassword back into the ini
+    save_active_config_to_slot()  # persist the reset to the active save
+    return read_ini()
+
+
 # ---------------------------------------------------------------------------
 # Save slots + mods (file manipulation)
 # ---------------------------------------------------------------------------
@@ -1872,6 +1891,26 @@ def build_app():
         # Settings are tied to the save: persist this edit to the active slot.
         save_active_config_to_slot()
         result = {"saved": True}
+        if restart:
+            try:
+                restart_service()
+                result["restarted"] = True
+            except subprocess.CalledProcessError as e:
+                result["restarted"] = False
+                result["error"] = (e.stderr or b"").decode()
+        return result
+
+    @app.post("/api/config/reset")
+    def post_config_reset(restart: bool = False, _: str = Depends(require("settings"))):
+        raw = reset_config()
+        result = {
+            "ok": True,
+            "error": None,
+            "reset": True,
+            "raw": raw,
+            "options": parse_options(raw),
+            "path": INI_PATH,
+        }
         if restart:
             try:
                 restart_service()

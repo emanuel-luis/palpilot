@@ -253,6 +253,12 @@ export default {
     saveFailed: "Failed to save.",
     savedGeneric: "Saved.",
     loadFailed: "Failed to load settings.",
+    reset: "Reset to defaults",
+    resetTitle: "Reset settings to defaults?",
+    resetConfirm:
+      "This replaces the active save's settings with Palworld's defaults. Server access (REST/admin) is kept. Restart to apply.",
+    resetDone: "Settings reset to defaults{restarting}.",
+    resetFailed: "Failed to reset settings.",
     sec: {
       serverNet: "Server & Network",
       apiRcon: "API & RCON",

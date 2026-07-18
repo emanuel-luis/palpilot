@@ -16,12 +16,14 @@ import { apiGet, apiPost } from "../api.js";
 import Card from "../components/ui/Card.vue";
 import Btn from "../components/ui/Btn.vue";
 import Field from "../components/ui/Field.vue";
+import { useConfirm } from "../components/ui/useConfirm.js";
 import { useToast } from "../components/ui/useToast.js";
 import { useServerStore } from "../stores/server.js";
 
 const { t } = useI18n();
 const server = useServerStore();
 const toast = useToast();
+const { confirm } = useConfirm();
 
 // Keys whose values must stay masked/plain-text and are worth surfacing even
 // if the REST "settings" snapshot happens to omit them.
@@ -180,6 +182,23 @@ async function saveRaw() {
   toast[r.ok ? "ok" : "error"](r.ok ? t("settings.savedGeneric") : r.error || t("settings.saveFailed"));
   if (r.ok) loadConfig();
 }
+
+async function resetConfig() {
+  const ok = await confirm({
+    title: t("settings.resetTitle"),
+    message: t("settings.resetConfirm"),
+    confirmLabel: t("settings.reset"),
+    danger: true,
+  });
+  if (!ok) return;
+  const r = await apiPost("/api/config/reset", {}, { key: "settings", query: `restart=${cfgRestart.value}` });
+  toast[r.ok ? "ok" : "error"](
+    r.ok
+      ? t("settings.resetDone", { restarting: cfgRestart.value ? t("settings.savedRestarting") : "" })
+      : r.error || t("settings.resetFailed"),
+  );
+  if (r.ok) loadConfig();
+}
 </script>
 
 <template>
@@ -218,6 +237,9 @@ async function saveRaw() {
       </details>
 
       <div class="row end">
+        <Btn variant="ghost" class="reset-btn" busy-key="settings" @click="resetConfig">
+          {{ t("settings.reset") }}
+        </Btn>
         <label class="row inline-check">
           <input v-model="cfgRestart" type="checkbox" style="width: auto" />
           {{ t("settings.restartAfterSaving") }}
@@ -294,8 +316,16 @@ async function saveRaw() {
   justify-content: flex-end;
   margin-top: 14px;
 }
+.reset-btn {
+  margin-right: auto; /* push the destructive reset to the far left, away from Save */
+  color: var(--danger);
+}
+.reset-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
 .inline-check {
-  margin-right: auto;
   font-size: 13px;
 }
 .raw-editor {
