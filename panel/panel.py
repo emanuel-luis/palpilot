@@ -455,6 +455,60 @@ def write_ini(raw: str):
 
 
 # ---------------------------------------------------------------------------
+# Per-slot settings
+# ---------------------------------------------------------------------------
+#
+# Each save slot carries its OWN PalWorldSettings.ini, so settings are tied to
+# the save, not the server. The live ini (INI_PATH) always mirrors the ACTIVE
+# slot's config:
+#   - editing config (POST /api/config) snapshots the live ini into the active
+#     slot's store,
+#   - activating a slot swaps its stored config into the live ini,
+#   - cloning copies the config too.
+# Infra-critical keys (RESTAPIEnabled/RESTAPIPort/AdminPassword) are re-asserted
+# by bootstrap() after every swap, so switching worlds can never break the
+# panel<->game REST link regardless of what a slot's config held.
+
+SLOT_CONFIG_DIR = os.environ.get(
+    "SLOT_CONFIG_DIR", f"{STEAM_DIR}/Pal/Saved/palworld-slot-configs"
+)
+
+
+def _slot_config_path(guid: str) -> str:
+    return os.path.join(SLOT_CONFIG_DIR, f"{_safe_name(guid)}.ini")
+
+
+def save_active_config_to_slot(guid: str = "") -> None:
+    """Snapshot the live PalWorldSettings.ini into a slot's config store."""
+    guid = guid or get_active_world()
+    if not guid or not os.path.exists(INI_PATH):
+        return
+    atomic_write(_slot_config_path(guid), read_ini())
+    _chown_steam(_slot_config_path(guid))
+
+
+def apply_slot_config(guid: str) -> bool:
+    """Make the slot's stored config the live ini. Returns True if the slot had
+    a stored config (and it was applied), False if it had none (live ini kept)."""
+    src = _slot_config_path(guid)
+    if guid and os.path.exists(src):
+        with open(src, "r", encoding="utf-8") as f:
+            write_ini(f.read())
+        return True
+    return False
+
+
+def copy_slot_config(src_guid: str, dst_guid: str) -> None:
+    """Copy one slot's stored config to another (used on clone / restore-as-new)."""
+    src = _slot_config_path(src_guid)
+    if src_guid and dst_guid and os.path.exists(src):
+        os.makedirs(SLOT_CONFIG_DIR, exist_ok=True)
+        with open(src, "r", encoding="utf-8") as f:
+            atomic_write(_slot_config_path(dst_guid), f.read())
+        _chown_steam(_slot_config_path(dst_guid))
+
+
+# ---------------------------------------------------------------------------
 # Save slots + mods (file manipulation)
 # ---------------------------------------------------------------------------
 
@@ -612,6 +666,11 @@ def clone_slot(guid: str, name: str) -> dict:
     dest = os.path.join(SAVEGAMES_DIR, new_guid)
     shutil.copytree(src, dest)
     _chown_steam(dest, recursive=True)
+    # Settings travel with the save: capture the active slot's latest edits, then
+    # copy the source slot's config to the clone.
+    if guid == get_active_world():
+        save_active_config_to_slot(guid)
+    copy_slot_config(guid, new_guid)
     friendly = _safe_name(name) or new_guid
     created = _timestamp()
     meta = _load_slots_meta()
@@ -831,7 +890,16 @@ def activate_slot(guid: str, restart: bool = True) -> dict:
     if was_active:
         stop_service()
     backup = backup_world(current, label="pre-switch") if current else {"backed_up": False}
+    # Persist the outgoing slot's settings, then switch the active-world pointer.
+    if current:
+        save_active_config_to_slot(current)
     set_active_world(guid)
+    # Swap in the target slot's own settings (or seed from the current live ini
+    # if it has none yet), then re-assert the REST/admin keys so the panel link
+    # survives the swap, and persist the result as this slot's config.
+    apply_slot_config(guid)
+    bootstrap()
+    save_active_config_to_slot(guid)
     started = False
     if restart and was_active:
         start_service()
@@ -911,8 +979,15 @@ def restore_backup(guid: str, ref: str, as_new_slot: bool = False, name: str = "
             "name": _safe_name(name) or meta.get(target_guid, {}).get("name") or target_guid,
             "created": meta.get(target_guid, {}).get("created") or _timestamp(),
         }
+    if as_new_slot:
+        # a restored-as-new slot inherits the source slot's settings
+        copy_slot_config(guid, target_guid)
     _save_slots_meta(meta)
+    save_active_config_to_slot(current) if current else None
     set_active_world(target_guid)
+    apply_slot_config(target_guid)
+    bootstrap()
+    save_active_config_to_slot(target_guid)
     started = False
     if was_running:
         start_service()
@@ -940,6 +1015,10 @@ def delete_slot(guid: str) -> dict:
         return {"ok": False, "reason": "not_found", "error": "not found"}
     backup = backup_world(guid, label="pre-delete")
     shutil.rmtree(full)
+    try:
+        os.remove(_slot_config_path(guid))
+    except OSError:
+        pass
     meta = _load_slots_meta()
     meta.pop(guid, None)
     _save_slots_meta(meta)
@@ -1790,6 +1869,8 @@ def build_app():
         else:
             raise HTTPException(400, "provide 'raw' or 'options'")
         write_ini(raw)
+        # Settings are tied to the save: persist this edit to the active slot.
+        save_active_config_to_slot()
         result = {"saved": True}
         if restart:
             try:

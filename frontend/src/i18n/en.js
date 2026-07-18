@@ -95,7 +95,7 @@ export default {
     },
     activeWorld: {
       title: "Active world",
-      note: "Settings and Mods below apply to the currently active save slot.",
+      note: "Settings and Mods belong to the active save — each save keeps its own, and they travel with it when you clone or switch.",
     },
   },
 
