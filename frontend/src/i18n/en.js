@@ -3,8 +3,8 @@
 // file + one line in main.js, never a template rewrite.
 export default {
   app: {
-    title: "PalPilot",
-    subtitle: "Palworld server control panel",
+    title: "Palworld Admin",
+    subtitle: "Server admin console",
   },
 
   common: {
@@ -55,7 +55,7 @@ export default {
 
   login: {
     title: "Sign in",
-    subtitle: "Sign in with your PalPilot account.",
+    subtitle: "Sign in to the server admin console.",
     username: "Username",
     password: "Password",
     submit: "Sign in",

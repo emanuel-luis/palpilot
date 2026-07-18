@@ -1,102 +1,108 @@
-/* PalPilot Console — global design tokens, resets, and shared utilities.
+/* Palworld Admin — global design tokens, resets, and shared utilities.
    Loaded once from main.js. Component-specific rules live in each SFC; this
    file holds only what every component must agree on.
 
-   Identity: a minimalist "instrument panel". Cool graphite surfaces, hairline
-   borders, monospace for all data/IDs/metrics, and ONE restrained warm-amber
-   accent used sparingly (primary action, active nav, the online indicator).
-   The server's power state is the visual hero.
+   Design — "Field Ops": a calm, professional, LIGHT-first admin surface for
+   running a game server. Cool paper neutrals, one spruce-green accent (reads
+   "healthy / go", nods to Palworld's fields — not the usual SaaS blue), and
+   monospace with tabular figures for every metric/ID/number so data lines up.
+   Dark mode is retained and mirrors the same system.
 
-   Theming: dark is the default; prefers-color-scheme:light flips it, and
-   ThemeToggle stamps data-theme on <html> to override either way (attribute
-   wins over the media query). Component var names are kept stable
-   (--panel, --panel-2, --accent, …) so SFCs restyle purely through tokens. */
+   Theming: light is the default; prefers-color-scheme:dark flips it, and the
+   header toggle stamps data-theme="light|dark" on <html> to override either
+   way (attribute wins over the media query). Component var names are stable
+   (--panel, --accent, …) so SFCs restyle purely through tokens. */
 
 :root {
-  --bg: #0d1013;
-  --panel: #14181c;
-  --panel-2: #1a2026;
-  --border: #242c33;
-  --text: #e9eef2;
-  --muted: #808d98;
-  --faint: #4c565e;
-  --accent: #e2a03f;
-  --accent-2: #b9822f;
-  --accent-soft: rgba(226, 160, 63, 0.14);
-  --ok: #56b877;
-  --warn: #e2a03f;
-  --danger: #e0564d;
-  --danger-2: #a83a33;
-  --focus: #e2a03f;
-  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --border: #e1e6ec;
+  --text: #141922;
+  --muted: #58626f;
+  --faint: #97a2af;
+  --accent: #1f7a5a;
+  --accent-2: #17603f;
+  --accent-soft: #e7f2ec;
+  --ok: #1f8a5b;
+  --warn: #b06f16;
+  --danger: #c53d2c;
+  --danger-2: #9e2f21;
+  --focus: #1f7a5a;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", Consolas, monospace;
-  --radius: 8px;
-  --radius-sm: 6px;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f2f4f6;
-    --panel: #ffffff;
-    --panel-2: #eef1f4;
-    --border: #dde2e7;
-    --text: #1b232c;
-    --muted: #5c6772;
-    --faint: #99a3ad;
-    --accent: #b9772a;
-    --accent-2: #9a611f;
-    --accent-soft: rgba(185, 119, 42, 0.12);
-    --ok: #2e8f52;
-    --warn: #b9772a;
-    --danger: #c33b32;
-    --danger-2: #942820;
-    --focus: #b9772a;
+    --bg: #0f1418;
+    --panel: #161c22;
+    --panel-2: #1c242b;
+    --border: #29323b;
+    --text: #e8edf1;
+    --muted: #92a0ab;
+    --faint: #5c6772;
+    --accent: #35b07e;
+    --accent-2: #2a8d64;
+    --accent-soft: rgba(53, 176, 126, 0.15);
+    --ok: #3fc088;
+    --warn: #d29a3a;
+    --danger: #e5675a;
+    --danger-2: #b23e33;
+    --focus: #35b07e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
   }
 }
 
-:root[data-theme="dark"] {
-  --bg: #0d1013;
-  --panel: #14181c;
-  --panel-2: #1a2026;
-  --border: #242c33;
-  --text: #e9eef2;
-  --muted: #808d98;
-  --faint: #4c565e;
-  --accent: #e2a03f;
-  --accent-2: #b9822f;
-  --accent-soft: rgba(226, 160, 63, 0.14);
-  --ok: #56b877;
-  --warn: #e2a03f;
-  --danger: #e0564d;
-  --danger-2: #a83a33;
-  --focus: #e2a03f;
+:root[data-theme="light"] {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --border: #e1e6ec;
+  --text: #141922;
+  --muted: #58626f;
+  --faint: #97a2af;
+  --accent: #1f7a5a;
+  --accent-2: #17603f;
+  --accent-soft: #e7f2ec;
+  --ok: #1f8a5b;
+  --warn: #b06f16;
+  --danger: #c53d2c;
+  --danger-2: #9e2f21;
+  --focus: #1f7a5a;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
 }
 
-:root[data-theme="light"] {
-  --bg: #f2f4f6;
-  --panel: #ffffff;
-  --panel-2: #eef1f4;
-  --border: #dde2e7;
-  --text: #1b232c;
-  --muted: #5c6772;
-  --faint: #99a3ad;
-  --accent: #b9772a;
-  --accent-2: #9a611f;
-  --accent-soft: rgba(185, 119, 42, 0.12);
-  --ok: #2e8f52;
-  --warn: #b9772a;
-  --danger: #c33b32;
-  --danger-2: #942820;
-  --focus: #b9772a;
+:root[data-theme="dark"] {
+  --bg: #0f1418;
+  --panel: #161c22;
+  --panel-2: #1c242b;
+  --border: #29323b;
+  --text: #e8edf1;
+  --muted: #92a0ab;
+  --faint: #5c6772;
+  --accent: #35b07e;
+  --accent-2: #2a8d64;
+  --accent-soft: rgba(53, 176, 126, 0.15);
+  --ok: #3fc088;
+  --warn: #d29a3a;
+  --danger: #e5675a;
+  --danger-2: #b23e33;
+  --focus: #35b07e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 * {
   box-sizing: border-box;
 }
 
-/* Nothing should ever push the page sideways; long tokens wrap or scroll
-   inside their own container instead (see .scroll-x, .clamp, .mono cells). */
 html,
 body {
   margin: 0;
@@ -107,9 +113,10 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.55 var(--font-ui);
+  font: 14px/1.5 var(--font-ui);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 #app {
@@ -123,6 +130,7 @@ a {
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+  border-radius: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -142,34 +150,33 @@ a {
   font-family: var(--font-mono);
 }
 
-/* Uppercase monospace micro-label — the console "eyebrow". */
-.eyebrow {
+/* Tabular figures: every number, metric, and ID uses this so digits line up
+   by place value (right-aligned columns compare at a glance). */
+.num {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Uppercase micro-label — section eyebrow. */
+.eyebrow {
   font-size: 11px;
-  letter-spacing: 0.09em;
+  font-weight: 600;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-/* ---- overflow discipline (fixes text spilling out of cards/cells) ---- */
+/* ---- overflow discipline (no text escapes a card/cell) ---- */
 
-/* Flex/grid children default to min-width:auto, which lets long unbreakable
-   strings (GUIDs, userIds, mod filenames) blow out their container. Reset it
-   where our layout primitives live so children can actually shrink + wrap. */
 .row > *,
 .actions > *,
 .grid > * {
   min-width: 0;
 }
-
-/* Long machine strings: wrap anywhere rather than overflow. Use on any cell
-   holding a GUID / userId / path / URL. */
 .break {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-
-/* Single-line truncate with ellipsis; pair with a title="" for the full value. */
 .clamp {
   display: block;
   max-width: 100%;
@@ -177,20 +184,16 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* Wide content (tables, raw editors) scrolls inside itself, never the page. */
 .scroll-x {
   overflow-x: auto;
 }
 
-/* ---- canonical action row: keeps a set of buttons on ONE line ---- */
-/* Buttons no longer wrap into a ragged block; if they don't fit, the row
-   scrolls horizontally inside itself. Combined with compact icon buttons,
-   a full action set (activate/backup/clone/rename/restore/delete) fits. */
+/* ---- action rows ---- */
+/* One-line action set; scrolls inside itself rather than wrapping ragged. */
 .actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: nowrap;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -202,26 +205,23 @@ a {
   flex-wrap: wrap;
   overflow: visible;
 }
-
-/* Uniform-size action row: every button in the row shares the same width
-   (equal flex share of the row) and, since they also share one `size` prop,
-   the same height too. Use whenever a row holds several short-labelled TEXT
-   buttons (Activate/Backup/Clone/Rename/…) so they line up like a real
-   toolbar instead of a ragged row of differently-sized pills. Icon-only
-   buttons are already uniform 30px squares via .icon-btn/.icon-only and
-   don't need this. */
+/* Uniform-width buttons in a toolbar row (share one size for equal height). */
 .actions.equal > .btn {
   flex: 1 1 0;
   min-width: 0;
 }
 
-/* ---- shared surfaces ---- */
-
 .row {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
 .sr-only {
@@ -236,7 +236,7 @@ a {
   border: 0;
 }
 
-/* ---- form controls ---- */
+/* ---- form controls (labels always visible; placeholders show format only) ---- */
 
 input,
 select,
@@ -251,11 +251,12 @@ select,
 textarea {
   width: 100%;
   max-width: 100%;
-  background: var(--panel-2);
+  background: var(--panel);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 9px 11px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 textarea {
@@ -268,6 +269,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 input::placeholder,
@@ -285,15 +287,16 @@ button {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  background: transparent;
+  background: var(--panel);
   border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-sm);
   font-size: 14px;
   line-height: 1;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
 }
 .icon-btn:hover:not(:disabled) {
   border-color: var(--accent);

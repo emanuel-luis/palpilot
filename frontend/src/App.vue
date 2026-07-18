@@ -144,7 +144,7 @@ async function signOutAll() {
     </button>
 
     <aside class="sidebar" :class="{ open: sidebarOpen }">
-      <div class="brand">{{ t("app.title") }}</div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>{{ t("app.title") }}</div>
       <nav v-for="group in navGroups" :key="group.id" class="nav-group" :aria-label="group.label">
         <h2 class="nav-group-label">{{ group.label }}</h2>
         <button
@@ -235,9 +235,28 @@ async function signOutAll() {
   gap: 18px;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 700;
   font-size: 15px;
-  padding: 0 8px;
+  letter-spacing: -0.01em;
+  padding: 4px 8px 6px;
+}
+.brand-mark {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--accent);
+  position: relative;
+}
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: 2px;
+  background: var(--panel);
 }
 .nav-group {
   display: flex;
@@ -266,8 +285,8 @@ async function signOutAll() {
   color: var(--text);
 }
 .nav-item.active {
-  background: var(--panel-2);
-  color: var(--text);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -351,7 +370,7 @@ async function signOutAll() {
   border-radius: var(--radius-sm);
   padding: 8px;
   min-width: 220px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -411,7 +430,7 @@ async function signOutAll() {
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     z-index: 55;
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--shadow-lg);
   }
   .sidebar.open {
     transform: translateX(0);
