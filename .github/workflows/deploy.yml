@@ -1,0 +1,133 @@
+name: deploy
+
+# Auto-deploy on push to main. Mirrors the safe manual flow and NEVER touches
+# the VM (no terraform / no VM recreate): it only redeploys the always-on
+# coordinator (Cloud Function) and pushes panel code to the GCS bucket.
+#
+# - frontend/** or coordinator/**  -> build the single-file UI + redeploy the coordinator
+# - panel/**                       -> push panel code to the bucket (applied on next VM boot)
+#
+# One-time setup (Workload Identity Federation + repo secrets/vars): see docs/CICD.md.
+# Note: .github/** intentionally NOT a trigger path, so adding/editing this file
+# doesn't fire a deploy; use the "Run workflow" button (workflow_dispatch) to test.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "coordinator/**"
+      - "frontend/**"
+      - "panel/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write # required for keyless Workload Identity Federation auth
+
+env:
+  PROJECT: ${{ vars.GCP_PROJECT }}
+  REGION: ${{ vars.GCP_REGION }}
+  PANEL_BUCKET: ${{ vars.PANEL_BUCKET }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      coordinator: ${{ steps.f.outputs.coordinator }}
+      frontend: ${{ steps.f.outputs.frontend }}
+      panel: ${{ steps.f.outputs.panel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            coordinator: ['coordinator/**']
+            frontend: ['frontend/**']
+            panel: ['panel/**']
+
+  deploy-coordinator:
+    needs: changes
+    if: needs.changes.outputs.coordinator == 'true' || needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Frontend source is the source of truth: rebuild the self-contained
+      # coordinator/index.html from frontend/src so the deploy never relies on a
+      # stale committed bundle.
+      - name: Build frontend (single-file -> coordinator/index.html)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Validate coordinator (py_compile)
+        run: python3 -m py_compile coordinator/main.py
+
+      - id: auth
+        name: Authenticate to GCP (keyless / WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Redeploys code + the freshly built UI. Existing env vars (secrets) and
+      # the runtime service account are preserved by gcloud across redeploys;
+      # the non-secret service config is re-asserted here to stay deterministic.
+      - name: Deploy coordinator
+        run: |
+          gcloud functions deploy palworld-coordinator \
+            --gen2 \
+            --project="$PROJECT" \
+            --region="$REGION" \
+            --runtime=python312 \
+            --entry-point=coordinator \
+            --source=coordinator \
+            --trigger-http \
+            --service-account="palworld-coordinator@${PROJECT}.iam.gserviceaccount.com" \
+            --memory=512Mi \
+            --timeout=300s \
+            --min-instances=0 \
+            --max-instances=2 \
+            --allow-unauthenticated \
+            --quiet
+
+  deploy-panel:
+    needs: changes
+    if: needs.changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate panel (py_compile + INI parser tests)
+        run: |
+          python3 -m py_compile panel/panel.py panel/idle_watchdog.py
+          (cd panel && python3 -m unittest -q tests.test_ini)
+
+      - id: auth
+        name: Authenticate to GCP (keyless / WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Panel code lives in the bucket and is fetched by the VM at boot. This
+      # push does NOT restart a running server; it takes effect on the next VM
+      # start (or a manual "self-update"). We deliberately don't auto-restart a
+      # live game server from CI.
+      - name: Push panel code to bucket
+        run: |
+          gcloud storage cp panel/panel.py        "gs://${PANEL_BUCKET}/panel.py"
+          gcloud storage cp panel/index.html       "gs://${PANEL_BUCKET}/index.html"
+          gcloud storage cp panel/idle_watchdog.py "gs://${PANEL_BUCKET}/idle_watchdog.py"
