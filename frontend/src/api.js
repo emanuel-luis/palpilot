@@ -118,3 +118,44 @@ export const apiUpload = (path, blobOrFile, opts = {}) =>
     ...opts,
     headers: { "Content-Type": "application/octet-stream", ...(opts.headers || {}) },
   });
+
+/**
+ * Authenticated file download: GETs `path` with the Bearer token, then saves
+ * the response as `filename` via a temporary object URL. Returns {ok, error}.
+ * Used for save/backup downloads (small tar.gz files streamed via the panel).
+ */
+export async function apiDownload(path, filename) {
+  const session = useSessionStore();
+  const headers = {};
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  let res;
+  try {
+    res = await fetch(BASE + path, { method: "GET", headers });
+  } catch {
+    return { ok: false, error: "network error" };
+  }
+  if (res.status === 401) {
+    session.handleUnauthorized?.();
+    return { ok: false, error: "unauthorized" };
+  }
+  if (!res.ok) {
+    let msg = `download failed (${res.status})`;
+    try {
+      const j = await res.json();
+      msg = j.detail || j.error || msg;
+    } catch {
+      /* non-JSON error body */
+    }
+    return { ok: false, error: msg };
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "save.tar.gz";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return { ok: true, error: null };
+}
