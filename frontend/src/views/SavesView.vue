@@ -10,7 +10,7 @@
 import { onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { apiDelete, apiGet, apiPost } from "../api.js";
+import { apiDelete, apiDownload, apiGet, apiPost } from "../api.js";
 import Badge from "../components/ui/Badge.vue";
 import Btn from "../components/ui/Btn.vue";
 import Card from "../components/ui/Card.vue";
@@ -111,6 +111,24 @@ async function backupSlot(slot) {
   else toast.error(r.error || t("saves.backupFailed"));
   loadSlots();
   if (ensureBackups(slot.guid).open) loadBackups(slot);
+}
+
+async function downloadCurrent(slot) {
+  toast.ok(t("saves.downloadPreparing"));
+  const r = await apiDownload(
+    `/api/saves/${encodeURIComponent(slot.guid)}/download`,
+    `${slot.name}-current.tar.gz`,
+  );
+  if (!r.ok) toast.error(r.error || t("saves.downloadFailed"));
+}
+
+async function downloadBackup(slot, backup) {
+  toast.ok(t("saves.downloadPreparing"));
+  const r = await apiDownload(
+    `/api/saves/${encodeURIComponent(slot.guid)}/backups/${encodeURIComponent(backup.ref)}/download`,
+    backup.file,
+  );
+  if (!r.ok) toast.error(r.error || t("saves.downloadFailed"));
 }
 
 async function deleteSlot(slot) {
@@ -334,6 +352,14 @@ const BACKUP_COLUMNS = [
                       <Btn
                         size="sm"
                         variant="ghost"
+                        :aria-label="`${t('saves.downloadCurrent')}: ${s.name}`"
+                        busy-key="saves"
+                        :disabled="s.empty"
+                        @click="downloadCurrent(s)"
+                      >{{ t("saves.download") }}</Btn>
+                      <Btn
+                        size="sm"
+                        variant="ghost"
                         :aria-label="`${t('saves.clone')}: ${s.name}`"
                         busy-key="saves"
                         @click="openClone(s)"
@@ -399,6 +425,12 @@ const BACKUP_COLUMNS = [
                             busy-key="saves-backups"
                             @click="openRestoreAsNew(s, row)"
                           >{{ t("saves.restoreAsNew") }}</Btn>
+                          <Btn
+                            size="sm"
+                            variant="ghost"
+                            :aria-label="`${t('saves.download')}: ${row.file}`"
+                            @click="downloadBackup(s, row)"
+                          >{{ t("saves.download") }}</Btn>
                         </div>
                       </template>
                     </DataTable>

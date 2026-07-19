@@ -848,6 +848,28 @@ def list_backups(guid: str) -> dict:
     return {"ok": True, "error": None, "guid": guid, "backups": merged}
 
 
+def _safe_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def export_world_tar(guid: str) -> tuple:
+    """Tar a world folder's CURRENT on-disk state to a temp file for download.
+    Returns (temp_path, download_filename) or ("", "") if the world is missing."""
+    src = os.path.join(SAVEGAMES_DIR, guid)
+    if not os.path.isdir(src) or not os.listdir(src):
+        return "", ""
+    name = _load_slots_meta().get(guid, {}).get("name") or guid
+    fname = f"{_safe_name(name) or guid}-current-{_timestamp()}.tar.gz"
+    tmp = os.path.join(tempfile.gettempdir(), f"dl-{secrets.token_hex(6)}.tar.gz")
+    subprocess.run(
+        ["tar", "czf", tmp, "-C", SAVEGAMES_DIR, guid], check=True, capture_output=True
+    )
+    return tmp, fname
+
+
 def backup_world(guid: str, label: str = "manual") -> dict:
     """Tar a world folder; upload to GCS (if configured) and keep a local
     copy, then prune both to the last BACKUP_KEEP for this slot."""
@@ -1755,8 +1777,9 @@ def bootstrap():
 
 def build_app():
     from fastapi import Depends, FastAPI, HTTPException, Request, status
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
     from fastapi.security import HTTPBasic, HTTPBasicCredentials
+    from starlette.background import BackgroundTask
 
     app = FastAPI(title="Palworld Panel", docs_url=None, redoc_url=None)
     sec = HTTPBasic(auto_error=False)
@@ -1984,6 +2007,49 @@ def build_app():
         if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
             return _envelope({"ok": False, "reason": "validation", "error": "invalid guid"})
         return list_backups(guid)
+
+    @app.get("/api/saves/{guid}/download")
+    def saves_download(guid: str, _: str = Depends(require("view"))):
+        """Download the CURRENT on-disk state of a save as a .tar.gz."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+            raise HTTPException(400, "invalid guid")
+        tmp, fname = export_world_tar(guid)
+        if not tmp:
+            raise HTTPException(404, "world not found or empty")
+        return FileResponse(
+            tmp,
+            media_type="application/gzip",
+            filename=fname,
+            background=BackgroundTask(_safe_remove, tmp),
+        )
+
+    @app.get("/api/saves/{guid}/backups/{ref}/download")
+    def saves_backup_download(guid: str, ref: str, _: str = Depends(require("view"))):
+        """Download a specific backup, validated against the slot's own listing."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+            raise HTTPException(400, "invalid guid")
+        match = next((b for b in list_backups(guid)["backups"] if b["ref"] == ref), None)
+        if not match:
+            raise HTTPException(404, "backup not found for this slot")
+        if match["location"] == "local":
+            path = os.path.join(_slot_backups_dir(), match["file"])
+            if not os.path.isfile(path):
+                raise HTTPException(404, "backup file missing")
+            return FileResponse(path, media_type="application/gzip", filename=match["file"])
+        # remote-only: fetch from GCS to a temp file, then stream + clean up
+        tmp = os.path.join(tempfile.gettempdir(), f"dl-{secrets.token_hex(6)}.tar.gz")
+        try:
+            subprocess.run(
+                ["gsutil", "cp", match["uri"], tmp], check=True, capture_output=True, timeout=180
+            )
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(502, f"could not fetch backup: {(e.stderr or b'').decode()}")
+        return FileResponse(
+            tmp,
+            media_type="application/gzip",
+            filename=match["file"],
+            background=BackgroundTask(_safe_remove, tmp),
+        )
 
     @app.post("/api/saves/{guid}/restore")
     async def saves_restore(guid: str, payload: dict, _: str = Depends(require("saves"))):
