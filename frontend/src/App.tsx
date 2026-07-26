@@ -6,15 +6,15 @@ import { ConsoleView } from "@/views/Console";
 import { UsersView } from "@/views/Users";
 import { AccountView } from "@/views/Account";
 import { Toaster } from "@/components/ui/Toast";
-import { ConfirmHost, confirm } from "@/components/ui/Confirm";
-import { StatusPills, deriveGameState } from "@/components/StatusPills";
-import { useOverview } from "@/hooks/queries";
-import { apiGet, apiPost } from "@/lib/api";
+import { ConfirmHost } from "@/components/ui/Confirm";
+import { deriveGameState } from "@/components/StatusPills";
+import { AppShell } from "@/components/layout/AppShell";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useOverview, useSaves, isOffline } from "@/hooks/queries";
+import { apiGet } from "@/lib/api";
 import { t } from "@/i18n/en";
-import { cn } from "@/lib/cn";
-import { getTheme, resolvedTheme, toggleTheme } from "@/lib/theme";
+import { getTheme } from "@/lib/theme";
 import { DevSwitcher } from "@/components/DevSwitcher";
-import { toast } from "@/components/ui/Toast";
 
 function useBootstrapSession() {
   const s = useSession();
@@ -28,50 +28,14 @@ function useBootstrapSession() {
   }, [s.authed]);
 }
 
-function ThemeToggle() {
-  const [, tick] = useState(0);
-  const label = resolvedTheme() === "dark" ? t("header.themeLight") : t("header.themeDark");
+/** Shown while /api/session resolves permissions — shaped like the Console hero
+ *  so the layout doesn't jump when the real content arrives. */
+function BootSkeleton() {
   return (
-    <button className="btn btn-ghost" aria-label={label} title={label} onClick={() => { toggleTheme(); tick((v) => v + 1); }}>
-      {resolvedTheme() === "dark" ? "☀" : "☾"}
-    </button>
-  );
-}
-
-function AccountMenu() {
-  const s = useSession();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    function onDoc(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
-    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setOpen(false); }
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
-  }, []);
-  async function signOut() { await apiPost("/api/logout"); session.clear(); }
-  async function signOutAll() {
-    const ok = await confirm({ message: t("account.signOutAllConfirm"), confirmLabel: t("account.signOutAll"), danger: true });
-    if (!ok) return;
-    const r = await apiPost("/api/logout-all");
-    if (r.ok) toast.ok(t("account.signOutAllDone"));
-    session.clear();
-  }
-  return (
-    <div className="menu-wrap" ref={ref}>
-      <button className="btn btn-ghost" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
-        {s.user} ▾
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          <div className="menu-header">{t("header.signedInAs", { user: s.user })}</div>
-          <button className="menu-item" role="menuitem" onClick={() => { navigate("/account"); setOpen(false); }}>{t("header.account")}</button>
-          <div className="menu-sep" />
-          <button className="menu-item" role="menuitem" onClick={signOut}>{t("header.signOut")}</button>
-          <button className="menu-item" role="menuitem" onClick={signOutAll}>{t("header.signOutAll")}</button>
-        </div>
-      )}
-    </div>
+    <>
+      <Skeleton className="h-56 rounded-xl" />
+      <Skeleton className="h-40 rounded-xl" />
+    </>
   );
 }
 
@@ -82,6 +46,8 @@ function StaleBanner() {
   const [stale, setStale] = useState(false);
   useEffect(() => {
     if (!s.authed) { failsRef.current = 0; setStale(false); return; }
+    // status 0 is a transport failure. A 401 must NOT count — that means the
+    // session died, not that the data is stale.
     if (q.error || (q.data && !q.data.ok && q.data.status === 0)) {
       failsRef.current += 1;
       if (failsRef.current >= 2) setStale(true);
@@ -90,50 +56,38 @@ function StaleBanner() {
     }
   }, [q.data, q.error, s.authed]);
   if (!stale) return null;
-  return <div className="stale-banner" role="status" aria-live="polite">{t("header.staleData")}</div>;
-}
-
-function NavItem({ hash, label, active, onClick }: { hash: string; label: string; active: boolean; onClick: () => void }) {
   return (
-    <a href={`#${hash}`} className={cn("nav-item", active && "active")} onClick={(e) => { e.preventDefault(); onClick(); }}>
-      {label}
-    </a>
+    <div
+      role="status"
+      aria-live="polite"
+      className="rounded-md border border-warn/40 bg-warn/10 px-4 py-2 text-xs text-warn"
+    >
+      {t("header.staleData")}
+    </div>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const route = useHashRoute();
   const q = useOverview();
-  const vm = (q.data?.data as any)?.vm || { status: "" };
-  const server = (q.data?.data as any)?.server;
-  const gameState = deriveGameState(vm.status, !!server?.info);
-  const canUsers = session.can("users");
+  const saves = useSaves();
+  const body: any = (q.data?.data as any) || {};
+  const vm = body.vm || {};
+  const server = body.server;
+  const gameState = deriveGameState(vm.status || "", !!server?.info);
+  const activeSave = !isOffline(saves.data)
+    ? (saves.data as any)?.slots?.find((x: any) => x.active)?.name
+    : undefined;
   return (
     <>
-      <div className="app">
-        <header className="header">
-          <div className="brand"><span className="brand-mark" aria-hidden />PalPilot</div>
-          <div className="spacer" />
-          <StatusPills vmStatus={vm.status} gameState={gameState} />
-          <ThemeToggle />
-          <AccountMenu />
-        </header>
-        <aside className="sidebar">
-          <div className="nav-group">
-            <div className="nav-group-title">{t("nav.groups.console")}</div>
-            <NavItem hash="/console" label={t("nav.console")} active={route.startsWith("/console")} onClick={() => navigate("/console")} />
-          </div>
-          <div className="nav-group">
-            <div className="nav-group-title">{t("nav.groups.admin")}</div>
-            {canUsers && <NavItem hash="/users" label={t("nav.users")} active={route.startsWith("/users")} onClick={() => navigate("/users")} />}
-            <NavItem hash="/account" label={t("nav.account")} active={route.startsWith("/account")} onClick={() => navigate("/account")} />
-          </div>
-        </aside>
-        <main className="main">
-          <StaleBanner />
-          {children}
-        </main>
-      </div>
+      <AppShell
+        vmStatus={vm.status || ""}
+        gameState={gameState}
+        serverName={server?.info?.servername}
+        activeSave={activeSave}
+      >
+        <StaleBanner />
+        {children}
+      </AppShell>
       <Toaster />
       <ConfirmHost />
       <DevSwitcher />
@@ -156,9 +110,9 @@ function Router() {
   }, [s.ready, wantsUsers, mayUsers]);
 
   if (!s.authed) return <LoginView />;
-  if (!s.ready) return <Shell><div className="empty">{t("common.loading")}</div></Shell>;
+  if (!s.ready) return <Shell><BootSkeleton /></Shell>;
   if (wantsUsers) {
-    if (!mayUsers) return <Shell><div className="empty">{t("common.loading")}</div></Shell>;
+    if (!mayUsers) return <Shell><BootSkeleton /></Shell>;
     return <Shell><UsersView /></Shell>;
   }
   if (route.startsWith("/account")) return <Shell><AccountView /></Shell>;
