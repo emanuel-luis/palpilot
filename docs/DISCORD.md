@@ -75,13 +75,17 @@ The **bot token never reaches the coordinator** — it is only used locally by
    discord_user_role_ids  = ""               # empty = any member may use /palworld
    ```
 
-5. **Deploy the coordinator** (no VM downtime, players unaffected):
+5. **Deploy the coordinator** (no VM downtime, players unaffected). The coordinator
+   is a Cloud Run service now, so env changes land there — the old gen2 function is
+   a retiring shim and does not serve traffic:
 
-   ```powershell
-   terraform apply -target=google_storage_bucket_object.coordinator_src `
-                   -target=google_cloudfunctions2_function.coordinator
+   ```bash
+   terraform apply -target=google_cloud_run_v2_service.coordinator
    terraform output discord_interactions_url
    ```
+
+   Do **not** run an untargeted `terraform apply` casually — check the plan for
+   `must be replaced` on `google_compute_instance.palworld` first (see CLAUDE.md).
 
 6. **Point Discord at it** — paste that URL into *General Information → Interactions Endpoint URL*
    and save. Discord immediately sends a signed PING; saving succeeds only if the signature check
