@@ -102,10 +102,9 @@ function NavItem({ hash, label, active, onClick }: { hash: string; label: string
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  useBootstrapSession();
   const route = useHashRoute();
   const q = useOverview();
-  const vm = (q.data?.data as any)?.vm || { status: "TERMINATED" };
+  const vm = (q.data?.data as any)?.vm || { status: "" };
   const server = (q.data?.data as any)?.server;
   const gameState = deriveGameState(vm.status, !!server?.info);
   const canUsers = session.can("users");
@@ -145,11 +144,21 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Router() {
   const route = useHashRoute();
   const s = useSession();
+  // Permissions aren't known until /api/session answers, and can() is false until
+  // then — so a reload on #/users must WAIT rather than be bounced to /console.
+  const wantsUsers = route.startsWith("/users");
+  const mayUsers = session.can("users");
+
   useEffect(() => { getTheme(); }, []);
+  useEffect(() => {
+    // Redirect as an effect, never during render.
+    if (s.ready && wantsUsers && !mayUsers) navigate("/console");
+  }, [s.ready, wantsUsers, mayUsers]);
+
   if (!s.authed) return <LoginView />;
-  // Route: default to console; if user landed on /users without permission, redirect
-  if (route.startsWith("/users")) {
-    if (!session.can("users")) { navigate("/console"); return null; }
+  if (!s.ready) return <Shell><div className="empty">{t("common.loading")}</div></Shell>;
+  if (wantsUsers) {
+    if (!mayUsers) return <Shell><div className="empty">{t("common.loading")}</div></Shell>;
     return <Shell><UsersView /></Shell>;
   }
   if (route.startsWith("/account")) return <Shell><AccountView /></Shell>;
@@ -157,5 +166,7 @@ function Router() {
 }
 
 export default function App() {
+  // Runs regardless of route so perms resolve even on a deep link.
+  useBootstrapSession();
   return <Router />;
 }

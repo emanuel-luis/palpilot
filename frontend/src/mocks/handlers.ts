@@ -35,16 +35,26 @@ export async function handle(ctx: Ctx): Promise<Response> {
   // ── auth ────────────────────────────────────────────────────────────
   if (path === "/api/login" && method === "POST") {
     const b = await readJson(ctx.body);
-    if (!b.username || !b.password) return json({ ok: false, error: "invalid credentials" }, 401);
     const user = fx.users.find((u: any) => u.username === b.username);
-    if (!user) return json({ ok: false, error: "invalid credentials" }, 401);
+    // Mirror the real throttle so the login countdown UI is actually reachable:
+    // 5 failures inside 60s answers 429 with retry_after.
+    if (!b.username || !b.password || !user) {
+      fx.loginFails = (fx.loginFails || []).filter((ts: number) => Date.now() - ts < 60_000);
+      fx.loginFails.push(Date.now());
+      if (fx.loginFails.length > 5) {
+        return json({ ok: false, error: "too many attempts, try again later", retry_after: 60 }, 429);
+      }
+      return json({ ok: false, error: "invalid credentials" }, 401);
+    }
+    fx.loginFails = [];
     const perms = user.effective_perms;
     return json({ ok: true, error: null, token: makeToken(user.username, perms), user: user.username, perms, exp: Math.floor(Date.now() / 1000) + 3600 * 12 });
   }
   if (path === "/api/session" && method === "GET") {
-    // In mocks we honor the role knob: switching the knob returns those perms.
-    const uname = knobs.role;
-    const user = fx.users.find((u: any) => u.username === uname) || fx.users[0];
+    // The knob holds a ROLE (owner/operator/moderator/viewer), and fixture
+    // usernames are owner/alex/sam/guest — looking up by username matched only
+    // "owner", so three of the four role knobs silently did nothing.
+    const user = fx.users.find((u: any) => u.role === knobs.role) || fx.users[0];
     return json({ ok: true, error: null, user: user.username, perms: user.effective_perms });
   }
   if (path === "/api/logout" && method === "POST") return json({ ok: true, error: null });
@@ -58,20 +68,26 @@ export async function handle(ctx: Ctx): Promise<Response> {
 
   // ── overview ────────────────────────────────────────────────────────
   if (path === "/api/overview" && method === "GET") {
+    // Write THROUGH to the fixtures rather than shadowing them with locals: the
+    // vm_offline gate below reads fx.vm.status, so a local override made the
+    // header say RUNNING while every proxied section 503'd.
     const force = knobs.vmForce;
-    let vm = fx.vm;
-    let server = fx.server;
-    if (force === "off")      { vm = { ...vm, status: "TERMINATED" }; server = null; }
-    else if (force === "starting") { vm = { ...vm, status: "RUNNING" }; server = null; }
-    else if (force === "on")  {
-      vm = { ...vm, status: "RUNNING" };
-      server = {
+    if (force === "off") { fx.vm.status = "TERMINATED"; fx.server = null; }
+    else if (force === "starting") { fx.vm.status = "RUNNING"; fx.server = null; }
+    else if (force === "STOPPING") { fx.vm.status = "STOPPING"; fx.server = null; }
+    else if (force === "on") {
+      fx.vm.status = "RUNNING";
+      fx.server = {
         info: { version: "0.5.0", servername: fx.config.options.ServerName, description: fx.config.options.ServerDescription },
         metrics: { serverfps: 60, currentplayernum: knobs.showPlayers ? fx.playersSample.length : 0, maxplayernum: 16, uptime: 8123, days: 47, serverframetime: 16.7 },
         players: knobs.showPlayers ? fx.playersSample : [],
       };
-    } else if (force === "STOPPING") { vm = { ...vm, status: "STOPPING" }; server = null; }
-    return json({ ok: true, error: null, vm, server });
+    } else if (fx.server) {
+      // Keep the roster in step with the players knob on the unforced path too.
+      fx.server.players = knobs.showPlayers ? fx.playersSample : [];
+      fx.server.metrics = { ...fx.server.metrics, currentplayernum: knobs.showPlayers ? fx.playersSample.length : 0 };
+    }
+    return json({ ok: true, error: null, vm: fx.vm, server: fx.server });
   }
   if (path === "/api/vm/start" && method === "POST") {
     fx.vm.status = "RUNNING"; fx.server = null;
@@ -104,7 +120,12 @@ export async function handle(ctx: Ctx): Promise<Response> {
   if (vmRequired && fx.vm.status !== "RUNNING") {
     return json({ ok: false, error: "vm_offline", status: fx.vm.status }, 503);
   }
-  if (knobs.next503) { knobs.next503 = false; return json({ ok: false, error: "vm_offline", status: fx.vm.status }, 503); }
+  // Only proxied routes can ever answer vm_offline — /api/users and /api/roles are
+  // coordinator-owned and keep working while the VM is off.
+  if (knobs.next503 && vmRequired) {
+    knobs.next503 = false;
+    return json({ ok: false, error: "vm_offline", status: fx.vm.status }, 503);
+  }
 
   // ── rest passthrough ────────────────────────────────────────────────
   if (path.startsWith("/api/rest/") && method === "GET") {
@@ -116,6 +137,17 @@ export async function handle(ctx: Ctx): Promise<Response> {
     return json({ detail: "unknown endpoint" }, 404);
   }
   if (path.startsWith("/api/rest/") && method === "POST") {
+    const ep = path.slice("/api/rest/".length);
+    const POST_EPS = ["announce", "kick", "ban", "unban", "save", "shutdown", "stop"];
+    if (!POST_EPS.includes(ep)) return json({ detail: "unknown endpoint" }, 404);
+    const b = await readJson(ctx.body);
+    // Make moderation observable so the players table actually changes.
+    if ((ep === "kick" || ep === "ban") && b.userid && fx.server) {
+      fx.playersSample = fx.playersSample.filter((p: any) => p.userId !== b.userid);
+      fx.server.players = fx.server.players.filter((p: any) => p.userId !== b.userid);
+      fx.server.metrics = { ...fx.server.metrics, currentplayernum: fx.server.players.length };
+    }
+    if (ep === "stop") { fx.server = null; }
     return textRes("OK");
   }
   if (path === "/api/restart" && method === "POST") {
@@ -143,7 +175,9 @@ export async function handle(ctx: Ctx): Promise<Response> {
     fx.saves.slots.push(slot);
     return json({ ok: true, error: null, ...slot });
   }
-  const slotMatch = path.match(/^\/api\/saves\/([^/]+)(\/.*)?$/);
+  // `upload` is a literal segment, not a guid — exclude it or this matcher
+  // swallows the whole chunked-import API and 404s it as an unknown slot.
+  const slotMatch = path.match(/^\/api\/saves\/(?!upload(?:$|\/))([^/]+)(\/.*)?$/);
   if (slotMatch) {
     const guid = slotMatch[1];
     const sub = slotMatch[2] || "";

@@ -4,9 +4,7 @@
 // Consumers gate protected UI on session.can(x), which is false until ready.
 
 import { useSyncExternalStore } from "react";
-import { decodeToken, tokenExpiresSoon } from "@/lib/session";
-
-const TOKEN_KEY = "palpilot.token";
+import { decodeToken, getToken, setToken, tokenExpiresSoon } from "@/lib/session";
 
 type State = {
   token: string | null;
@@ -20,20 +18,22 @@ let state: State = load();
 const listeners = new Set<() => void>();
 
 function load(): State {
-  const token = localStorage.getItem(TOKEN_KEY);
+  // getToken()/setToken() are try/catch-wrapped for private-browsing modes,
+  // where touching localStorage throws.
+  const token = getToken();
   if (!token) return { token: null, user: "", perms: [], ready: true, authed: false };
+  // The coordinator's token payload names the user "u", not "user".
   const decoded = decodeToken(token);
   return {
     token,
-    user: decoded?.user ?? "",
-    perms: decoded?.perms ?? [],
+    user: decoded?.u ?? "",
+    perms: expandPerms(decoded?.perms ?? []),
     ready: false,
     authed: true,
   };
 }
 function persist() {
-  if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
-  else localStorage.removeItem(TOKEN_KEY);
+  setToken(state.token || "");
 }
 function set(next: Partial<State>) {
   state = { ...state, ...next };
