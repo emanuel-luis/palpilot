@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { apiPost } from "@/lib/api";
+import { session } from "@/stores/session";
 import { toast } from "./ui/Toast";
 import { confirm } from "./ui/Confirm";
 import { t } from "@/i18n/en";
 
 export function CommandsSection() {
+  const canRestart = session.can("settings");
   const [msg, setMsg] = useState("");
   const [uid, setUid] = useState("");
   const [reason, setReason] = useState("");
@@ -29,7 +31,11 @@ export function CommandsSection() {
     await run(action, `/api/rest/${action}`, body, action);
   }
   async function saveWorld() { await run("save", "/api/rest/save", {}, "save"); }
+  // POST /api/restart is a `settings` route, not `commands` — this whole section is
+  // mounted behind `commands`, so a moderator would otherwise see a button that
+  // can only ever 403.
   async function restart() {
+    if (!canRestart) return;
     const ok = await confirm({ message: t("commands.restartConfirm"), confirmLabel: t("commands.restart"), danger: true });
     if (!ok) return;
     await run("restart", "/api/restart", {}, "restart");
@@ -79,7 +85,9 @@ export function CommandsSection() {
         <div className="panel-header"><div className="panel-title">{t("commands.powerTitle")}</div></div>
         <div className="panel-body stack">
           <div className="field-hint">{t("commands.powerNote")}</div>
-          <div className="row"><button className="btn" onClick={restart} disabled={busy === "restart"}>{t("commands.restart")}</button></div>
+          {canRestart && (
+            <div className="row"><button className="btn" onClick={restart} disabled={busy === "restart"}>{t("commands.restart")}</button></div>
+          )}
           <div className="row">
             <div className="field" style={{ maxWidth: 140 }}><label className="field-label">{t("commands.waitSeconds")}</label>
               <input className="input mono" type="number" min={0} value={wait} onChange={(e) => setWait(Number(e.target.value) || 0)} /></div>

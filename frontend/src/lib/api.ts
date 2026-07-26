@@ -55,8 +55,7 @@ async function request<T = any>(
   opts: Opts = {}
 ): Promise<ApiResult<T>> {
   const headers: Record<string, string> = { ...(opts.headers || {}) };
-  const s = session.get();
-  if (s.token) headers.Authorization = `Bearer ${s.token}`;
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
 
   let payload: BodyInit | undefined;
   if (body == null || body === undefined) {
@@ -82,8 +81,11 @@ async function request<T = any>(
 
   const data = await readBody(res);
 
+  // A 401 anywhere but /api/login means the token is dead (expired, or its `ver`
+  // was bumped by logout-all / a password change): drop it so the app falls back
+  // to the login screen. On /api/login a 401 just means "wrong password".
   if (res.status === 401 && path !== "/api/login") {
-    session.handleUnauthorized();
+    session.clear();
   }
 
   const dataOkField = (data && typeof data === "object" ? (data as any).ok : undefined);
@@ -109,13 +111,12 @@ export const apiUpload = <T = any>(path: string, blob: Blob | ArrayBuffer | Uint
 // { error } out of the JSON body.
 export async function apiDownload(path: string, filename: string): Promise<{ ok: boolean; error: string | null }> {
   const headers: Record<string, string> = {};
-  const s = session.get();
-  if (s.token) headers.Authorization = `Bearer ${s.token}`;
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
   let res: Response;
   try {
     res = await rawFetch(BASE + path, { method: "GET", headers });
   } catch { return { ok: false, error: "network_error" }; }
-  if (res.status === 401) { session.handleUnauthorized(); return { ok: false, error: "unauthorized" }; }
+  if (res.status === 401) { session.clear(); return { ok: false, error: "unauthorized" }; }
   if (!res.ok) {
     const body = await readBody(res);
     return { ok: false, error: (body as any).detail || (body as any).error || `download_failed_${res.status}` };

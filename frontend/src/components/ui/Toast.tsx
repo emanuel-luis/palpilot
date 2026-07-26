@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { t } from "@/i18n/en";
 
 type Toast = { id: number; kind: "ok" | "err" | "info"; msg: string };
 
@@ -24,14 +25,28 @@ export const toast = {
   info: (m: string) => push("info", m),
 };
 
+function dismiss(id: number) {
+  items = items.filter((x) => x.id !== id);
+  emit();
+}
+
 export function Toaster() {
   const [list, set] = useState<Toast[]>(items);
   useEffect(() => { listeners.add(set); return () => { listeners.delete(set); }; }, []);
+  // Class names must match styles.css: `.toast-stack`, and `.toast.err` /
+  // `.toast.warn` for the variants (there is no `.toast-ok` / `.toast-err`).
   return (
-    <div className="toaster" aria-live="polite">
-      {list.map((t) => (
-        <div key={t.id} className={`toast toast-${t.kind}`} role={t.kind === "err" ? "alert" : "status"}>
-          {t.msg}
+    <div className="toast-stack">
+      {list.map((x) => (
+        <div
+          key={x.id}
+          className={`toast${x.kind === "err" ? " err" : x.kind === "info" ? " warn" : ""}`}
+          // Failures interrupt; successes wait their turn.
+          role={x.kind === "err" ? "alert" : "status"}
+          aria-live={x.kind === "err" ? "assertive" : "polite"}
+        >
+          <span>{x.msg}</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => dismiss(x.id)} aria-label={t("common.dismiss")}>×</button>
         </div>
       ))}
     </div>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMods } from "@/hooks/queries";
+import { useMods, isOffline } from "@/hooks/queries";
 import { apiPost, apiDelete, apiUpload } from "@/lib/api";
 import { session } from "@/stores/session";
 import { toast } from "./ui/Toast";
@@ -24,9 +24,22 @@ export function ModsSection() {
   const [pendingChanges, setPendingChanges] = useState(false);
 
   if (q.isLoading) return <div className="field-hint">{t("common.loading")}</div>;
-  if (q.error) return <div className="empty">{t("mods.loadFailed")} <button className="btn btn-sm" onClick={() => q.refetch()}>{t("common.retry")}</button></div>;
-  const data = q.data!;
-  const ue4ssAvailable = data.capabilities.ue4ss;
+  if (isOffline(q.data)) {
+    return <div className="empty">{t("console.startFirst", { action: t("console.startFirstAction.mods") })}</div>;
+  }
+  if (q.error || !q.data) {
+    return (
+      <div className="empty">
+        {t("mods.loadFailed")}{" "}
+        <button className="btn btn-sm" onClick={() => q.refetch()}>{t("common.retry")}</button>
+      </div>
+    );
+  }
+  const data: any = q.data;
+  const mods: any[] = data.mods || [];
+  // capabilities.ue4ss is false unless the VM runs the Proton runtime; pre-empt the
+  // server's 409 instead of letting the user discover it the hard way.
+  const ue4ssAvailable = !!data.capabilities?.ue4ss;
 
   async function installUrl() {
     if (!url.trim()) { toast.err(t("mods.urlRequired")); return; }
@@ -109,13 +122,13 @@ export function ModsSection() {
       )}
       <div className="panel">
         <div className="panel-header">
-          <div className="panel-title">{t("mods.installed", { count: data.mods.length })}</div>
+          <div className="panel-title">{t("mods.installed", { count: mods.length })}</div>
           {pendingChanges && canRestart && (
             <button className="btn btn-sm btn-primary" onClick={restart} disabled={busy === "restart"}>{t("mods.restartToApply")} · {t("mods.restartNow")}</button>
           )}
         </div>
         <div className="panel-body">
-          {data.mods.length === 0 ? <div className="empty">{t("mods.noMods")}</div> : (
+          {mods.length === 0 ? <div className="empty">{t("mods.noMods")}</div> : (
             <div className="table-scroll">
               <table className="table">
                 <thead><tr>
@@ -125,7 +138,7 @@ export function ModsSection() {
                   {canWrite && <th style={{ width: 200 }}>{t("mods.colActions")}</th>}
                 </tr></thead>
                 <tbody>
-                  {data.mods.map((m: any) => (
+                  {mods.map((m: any) => (
                     <tr key={m.name}>
                       <td className="mono" style={{ fontSize: 13 }}>{m.name}</td>
                       <td><span className="pill">{m.type}</span></td>

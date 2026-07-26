@@ -41,3 +41,8 @@ export function isExpired(p: TokenPayload | null, skew = 30): boolean {
   if (!p || typeof p.exp !== "number") return true;
   return Date.now() / 1000 >= p.exp - skew;
 }
+
+/** True when `token` is missing, unparseable, or within `skew` seconds of expiry. */
+export function tokenExpiresSoon(token: string, skew = 300): boolean {
+  return isExpired(decodeToken(token), skew);
+}

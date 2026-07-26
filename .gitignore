@@ -39,3 +39,6 @@ terraform.rc
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Scratch prompts / working docs that are not part of the product
+LOVABLE_PROMPT.md

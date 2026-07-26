@@ -11,20 +11,32 @@ export function deriveGameState(vmStatus: string, hasInfo: boolean): GameState {
   return "offline";
 }
 
-const VM_LABEL: Record<string, string> = {
-  TERMINATED: "vm.off", RUNNING: "vm.on",
-  PROVISIONING: "vm.starting", STAGING: "vm.starting", REPAIRING: "vm.starting",
-  STOPPING: "vm.stopping", SUSPENDING: "vm.stopping",
-};
+// en.ts keys `status.vm.*` are keyed by the RAW GCE status string the coordinator
+// returns, so look them up directly rather than through an intermediate slug.
+const VM_STATES = [
+  "RUNNING", "TERMINATED", "STAGING", "PROVISIONING",
+  "STOPPING", "REPAIRING", "SUSPENDING", "SUSPENDED",
+] as const;
+
+function vmLabel(raw: string): string {
+  const s = (raw || "").toUpperCase();
+  return (VM_STATES as readonly string[]).includes(s)
+    ? t(`status.vm.${s}` as any)
+    : t("common.unknown");
+}
 
 export function StatusPills({ vmStatus, gameState }: { vmStatus: string; gameState: GameState }) {
-  const vmKey = VM_LABEL[(vmStatus || "").toUpperCase()] || "vm.unknown";
-  const vmTone = vmKey === "vm.on" ? "pill-on" : vmKey === "vm.off" ? "pill-off" : "pill-warn";
+  const s = (vmStatus || "").toUpperCase();
+  const vmTone = s === "RUNNING" ? "pill-on" : s === "TERMINATED" || !s ? "pill-off" : "pill-warn";
   const gameTone = gameState === "online" ? "pill-on" : gameState === "offline" ? "pill-off" : "pill-warn";
   return (
     <div className="row-tight">
-      <span className={cn("pill", vmTone)}><span className="dot" />{t("statusLabel.vm")}: {t(vmKey as any)}</span>
-      <span className={cn("pill", gameTone)}><span className="dot" />{t("statusLabel.game")}: {t(`game.${gameState}` as any)}</span>
+      <span className={cn("pill", vmTone)} title={t("header.vmTooltip")}>
+        <span className="dot" />{t("header.vmLabel")}: {vmLabel(vmStatus)}
+      </span>
+      <span className={cn("pill", gameTone)} title={t("header.serverTooltip")}>
+        <span className="dot" />{t("header.serverLabel")}: {t(`status.game.${gameState}` as any)}
+      </span>
     </div>
   );
 }

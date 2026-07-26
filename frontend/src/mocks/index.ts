@@ -33,8 +33,12 @@ export async function mockFetch(url: string, init: RequestInit): Promise<Respons
 
   await new Promise((r) => setTimeout(r, knobs.latencyMs));
 
-  if (knobs.forceStale && Math.random() < 0.5 && path !== "/api/login" && path !== "/api/session") {
-    return new Response("", { status: 0 as any }); // fetch itself would throw; simulate via network_error path
+  // A real transport failure REJECTS; it does not resolve with a status. `new
+  // Response("", {status: 0})` throws a RangeError (the constructor only accepts
+  // 200-599), so this only "worked" by accident. Reject deterministically instead
+  // — the random gate made the stale state impossible to reproduce.
+  if (knobs.forceStale && path !== "/api/login" && path !== "/api/session") {
+    return Promise.reject(new TypeError("Failed to fetch"));
   }
 
   const res = await handle({ method, path, query, body: init.body, fixtures, knobs });
