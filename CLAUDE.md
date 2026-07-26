@@ -8,6 +8,7 @@ and `docs/ARCHITECTURE.md` for diagrams. This file is the practical guide for ma
 ```
 coordinator/          Always-on control plane — Cloud Function (gen2, HTTP), Python.
   main.py             Auth (session tokens), users/roles, watchdog config, VM power, signed proxy to the agent.
+  discord_bot.py      Discord slash commands (interactions webhook); protocol only, actions via main._DiscordOps.
   index.html          BUILT single-page console (generated — do not hand-edit; see frontend/).
   requirements.txt
 frontend/             Console source: Vite + Vue 3 SFCs. Builds to a self-contained coordinator/index.html.
@@ -19,8 +20,9 @@ panel/                VM-side agent, Python (FastAPI).
   tests/test_ini.py   Unit tests for the PalWorldSettings.ini parser (the riskiest logic).
 main.tf, coordinator.tf, variables.tf, outputs.tf   Terraform (VM, IP, disks, buckets, function, IAM, monitoring).
 startup.sh            VM boot script (provisioning, systemd units, fetches agent code from the bucket).
+scripts/discord_register.py    One-off: registers the guild slash commands from discord_bot.COMMAND_DEFS.
 .github/workflows/deploy.yml   CI auto-deploy on push (see docs/CICD.md).
-docs/                 ARCHITECTURE.md, CICD.md.
+docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
 ```
 
 ## Build & verify (no app runtime needed)
@@ -71,6 +73,12 @@ docs/                 ARCHITECTURE.md, CICD.md.
   (`var.runtime_mode = "proton"`, a deliberate VM recreate) — otherwise UE4SS installs return 409.
 - **Cost model:** the VM auto-powers-off when empty; the fixed floor is the static IP + persistent disks, the
   variable cost is VM compute while running.
+- **Discord bot:** `POST /api/discord/interactions` is handled *before* the auth gate and authenticated by
+  Ed25519 signature (`DISCORD_PUBLIC_KEY`; empty = 404). Discord roles map to the same perm set, then flow
+  through the usual `_rbac_headers()` signing — no privileged side-channel. Answer within ~3s or Discord drops
+  the interaction (hence parallel agent calls with 2.5s timeouts and no deferred/followup path). Adding a
+  command means editing BOTH `COMMANDS` and `COMMAND_DEFS`, then re-running `scripts/discord_register.py`.
+  Deploys with the coordinator (function redeploy, zero downtime). See docs/DISCORD.md.
 
 ## Conventions
 

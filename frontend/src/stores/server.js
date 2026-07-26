@@ -3,7 +3,7 @@
 // the coordinator already exposes (see coordinator/main.py ROUTES) and that
 // docs/FRONTEND_V2_PLAN.md keeps unchanged:
 //
-//   GET  /api/overview        -> {ok, vm:{status,ip}, server:{info,metrics,players}|null}
+//   GET  /api/overview        -> {ok, vm:{status,ip,game_port}, server:{info,metrics,players}|null}
 //   POST /api/vm/start|stop   -> {ok, starting|stopping}
 //   GET  /api/config          -> {ok, options, raw, path}       (parsed PalWorldSettings.ini)
 //   GET  /api/rest/settings   -> effective settings straight from the Palworld REST API
@@ -16,7 +16,7 @@ const TRANSITION_RE = /STOPPING|STAGING|PROVISIONING|REPAIRING|SUSPEND/;
 
 export const useServerStore = defineStore("server", {
   state: () => ({
-    vm: { status: "", ip: "" },
+    vm: { status: "", ip: "", game_port: "" },
     server: null, // {info, metrics, players} while RUNNING, else null
     pollFails: 0,
     stale: false,
@@ -35,6 +35,22 @@ export const useServerStore = defineStore("server", {
     info: (s) => (s.server && s.server.info) || null,
     metrics: (s) => (s.server && s.server.metrics) || null,
     players: (s) => (s.server && s.server.players) || [],
+    /** `ip:port` players paste into Palworld's "Join via IP" box ("" until the IP is known). */
+    joinAddress: (s) => (s.vm.ip ? `${s.vm.ip}:${s.vm.game_port || 8211}` : ""),
+
+    /**
+     * State of the *game server* (palworld.service), which is not the same thing
+     * as the VM's power state: the VM boots in seconds but the game needs ~2min
+     * more before its REST API answers. /api/overview only fills `server` while
+     * the VM is RUNNING, and its `info` only once the game answers, so:
+     *   offline  — VM is off (or transitioning): the game can't be up
+     *   starting — VM is RUNNING but the game isn't answering yet
+     *   online   — the game answered
+     */
+    gameState: (s) => {
+      if (s.vm.status !== "RUNNING") return "offline";
+      return s.server && s.server.info ? "online" : "starting";
+    },
   },
 
   actions: {

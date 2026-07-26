@@ -11,11 +11,13 @@
   table/recent-backups panel are superseded by Saves' own backup list.
 -->
 <script setup>
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { apiPost } from "../api.js";
 import Card from "../components/ui/Card.vue";
 import Btn from "../components/ui/Btn.vue";
+import DataTable from "../components/ui/DataTable.vue";
 import Section from "../components/ui/Section.vue";
 import { useConfirm } from "../components/ui/useConfirm.js";
 import { useToast } from "../components/ui/useToast.js";
@@ -56,6 +58,83 @@ async function onStop() {
   if (!ok) return;
   const r = await server.stopVm();
   toast[r.ok ? "ok" : "error"](r.ok ? t("console.hero.stopping") : r.error || t("console.hero.stopFailed"));
+}
+
+// Click-to-copy join address. navigator.clipboard needs a secure context; the
+// hidden-textarea + execCommand path keeps it working over plain http too.
+const copied = ref(false);
+async function copyAddress() {
+  const text = server.joinAddress;
+  if (!text) return;
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch {
+    try {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.opacity = "0";
+      document.body.appendChild(el);
+      el.select();
+      ok = document.execCommand("copy");
+      document.body.removeChild(el);
+    } catch {
+      ok = false;
+    }
+  }
+  if (ok) {
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1600);
+    toast.ok(t("console.hero.addressCopied"));
+  } else {
+    toast.error(t("console.hero.addressCopyFailed"));
+  }
+}
+
+// The moderation column only exists for holders of the "commands" perm — the
+// same gate the coordinator route table and the agent's require() enforce, so
+// hiding it is cosmetic, not the security boundary.
+const playerColumns = computed(() => {
+  const cols = [
+    { key: "name", label: t("console.players.name") },
+    { key: "level", label: t("console.players.level"), align: "right" },
+    { key: "ping", label: t("console.players.ping"), align: "right" },
+    { key: "playerId", label: t("console.players.playerId") },
+  ];
+  if (session.can("commands")) cols.push({ key: "actions", label: t("console.players.actions"), align: "right" });
+  return cols;
+});
+
+function playerLabel(row) {
+  return row.name || row.accountName || row.userId || "?";
+}
+
+/** Palworld's kick/ban take the steam-style `userid` — that's `userId` here. */
+function playerUserId(row) {
+  return row.userId || row.playerId || "";
+}
+
+async function moderate(endpoint, row) {
+  const userid = playerUserId(row);
+  const who = playerLabel(row);
+  if (!userid) {
+    toast.error(t("console.players.noUserId"));
+    return;
+  }
+  const ok = await confirm({
+    message: t(endpoint === "ban" ? "console.players.confirmBan" : "console.players.confirmKick", { name: who }),
+    confirmLabel: t(endpoint === "ban" ? "commands.ban" : "commands.kick"),
+    danger: true,
+  });
+  if (!ok) return;
+  const r = await apiPost(`/api/rest/${endpoint}`, { userid, message: "" }, { key: "commands" });
+  toast[r.ok ? "ok" : "error"](
+    r.ok ? t("commands.commandOk", { cmd: endpoint }) : r.error || t("commands.commandFailed"),
+  );
+  if (r.ok) server.pollOverview();
 }
 
 const refreshing = ref(false);
@@ -149,7 +228,59 @@ onUnmounted(() => clearInterval(quickPoll));
           <Btn variant="ghost" icon="↻" :aria-label="t('common.refresh')" :loading="refreshing" @click="onRefresh" />
         </div>
       </div>
+
+      <div class="hero-address">
+        <span class="hero-stat-label eyebrow">{{ t("console.hero.addressLabel") }}</span>
+        <button
+          type="button"
+          class="addr"
+          :class="{ copied }"
+          :disabled="!server.joinAddress"
+          :title="t('console.hero.addressHint')"
+          @click="copyAddress"
+        >
+          <span class="addr-value">{{ server.joinAddress || t("console.hero.addressUnknown") }}</span>
+          <span class="addr-icon" aria-hidden="true">{{ copied ? "✓" : "⧉" }}</span>
+        </button>
+        <span class="muted addr-hint">{{ t("console.hero.addressHint") }}</span>
+      </div>
     </Card>
+
+    <Section v-if="session.can('view')" :title="t('console.sections.players')">
+      <DataTable :columns="playerColumns" :rows="server.players" row-key="userId">
+        <template #cell-name="{ row }">{{ row.name || row.accountName || "—" }}</template>
+        <template #cell-level="{ row }">{{ row.level ?? "—" }}</template>
+        <template #cell-ping="{ row }">{{ row.ping == null ? "—" : Math.round(row.ping) }}</template>
+        <template #cell-playerId="{ row }">
+          <span class="mono-id">{{ row.playerId || row.userId || "—" }}</span>
+        </template>
+        <template #cell-actions="{ row }">
+          <div class="actions row-actions">
+            <Btn
+              variant="ghost"
+              size="sm"
+              icon="👢"
+              :aria-label="`${t('commands.kick')}: ${playerLabel(row)}`"
+              busy-key="commands"
+              :disabled="!playerUserId(row)"
+              @click="moderate('kick', row)"
+            />
+            <Btn
+              variant="danger"
+              size="sm"
+              icon="🔨"
+              :aria-label="`${t('commands.ban')}: ${playerLabel(row)}`"
+              busy-key="commands"
+              :disabled="!playerUserId(row)"
+              @click="moderate('ban', row)"
+            />
+          </div>
+        </template>
+        <template #empty>
+          {{ server.isRunning ? t("console.players.empty") : t("console.players.offline") }}
+        </template>
+      </DataTable>
+    </Section>
 
     <Section v-if="session.can('saves')" :title="t('console.sections.saves')">
       <SavesView />
@@ -279,6 +410,58 @@ onUnmounted(() => clearInterval(quickPoll));
 }
 .no-perm-note {
   font-size: 12px;
+}
+
+.hero-address {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.addr:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.addr:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+.addr.copied {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.addr-icon {
+  font-size: 13px;
+  opacity: 0.75;
+}
+.addr-hint {
+  font-size: 12px;
+}
+.mono-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.row-actions {
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .active-world-heading {

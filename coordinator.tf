@@ -147,6 +147,7 @@ resource "google_cloudfunctions2_function" "coordinator" {
       VM_INSTANCE    = "palworld-tf-vm"
       VM_IP          = google_compute_address.palworld_ip.address
       VM_PORT        = tostring(var.panel_port)
+      GAME_PORT      = "8211" # matches the UDP firewall rule in main.tf
       PANEL_BUCKET   = google_storage_bucket.palworld_panel.name
       PANEL_USER     = var.panel_user
       PANEL_PASSWORD = var.panel_password
@@ -154,6 +155,12 @@ resource "google_cloudfunctions2_function" "coordinator" {
 
       IDLE_POLL_DEFAULT  = tostring(var.idle_poll_seconds)
       IDLE_GRACE_DEFAULT = tostring(var.idle_grace_seconds)
+
+      # Discord bot (docs/DISCORD.md). Empty public key = endpoint disabled.
+      DISCORD_PUBLIC_KEY     = var.discord_public_key
+      DISCORD_GUILD_ID       = var.discord_guild_id
+      DISCORD_ADMIN_ROLE_IDS = var.discord_admin_role_ids
+      DISCORD_USER_ROLE_IDS  = var.discord_user_role_ids
     }
   }
 

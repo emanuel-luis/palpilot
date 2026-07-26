@@ -2,3 +2,4 @@ functions-framework==3.*
 google-cloud-compute==1.*
 google-cloud-storage==2.*
 requests==2.*
+PyNaCl==1.*

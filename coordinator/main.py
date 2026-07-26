@@ -64,6 +64,17 @@ Env vars (set by Terraform):
   PANEL_USER, PANEL_PASSWORD         seed super-admin + agent proxy creds
   INTERNAL_TOKEN                     shared secret for the watchdog endpoints + RBAC signing
   IDLE_POLL_DEFAULT, IDLE_GRACE_DEFAULT  seed watchdog timeout
+  GAME_PORT                          UDP port players connect to (status/join address)
+  DISCORD_PUBLIC_KEY, DISCORD_GUILD_ID, DISCORD_ADMIN_ROLE_IDS,
+  DISCORD_USER_ROLE_IDS              Discord bot (see discord_bot.py; empty key = off)
+
+Discord bot:
+  POST /api/discord/interactions is Discord's Interactions Endpoint URL. It is
+  handled before the auth gate (Discord can't send our session token) and is
+  instead verified by Ed25519 signature in discord_bot.verify(). Commands map
+  the caller's Discord roles to a pseudo-user whose perms then flow through the
+  normal _rbac_headers() path, so the agent applies the same RBAC as a console
+  user. discord_bot.py owns the protocol; _DiscordOps below owns the actions.
 """
 
 import base64
@@ -77,11 +88,14 @@ import functions_framework
 import requests
 from google.cloud import compute_v1, storage
 
+import discord_bot
+
 PROJECT_ID = os.environ["PROJECT_ID"]
 VM_ZONE = os.environ["VM_ZONE"]
 VM_INSTANCE = os.environ["VM_INSTANCE"]
 VM_IP = os.environ.get("VM_IP", "")
 VM_PORT = os.environ.get("VM_PORT", "8080")
+GAME_PORT = os.environ.get("GAME_PORT", "8211")  # UDP port players connect to (main.tf firewall)
 PANEL_BUCKET = os.environ.get("PANEL_BUCKET", "")
 PANEL_USER = os.environ.get("PANEL_USER", "admin")
 PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "")
@@ -536,17 +550,39 @@ def _rbac_headers(user):
     }
 
 
-def _vm_get_json(path, user=None):
+def _vm_get_json(path, user=None, timeout=15):
     try:
         r = requests.get(
             VM_BASE + path,
             auth=(PANEL_USER, PANEL_PASSWORD),
             headers=_rbac_headers(user),
-            timeout=15,
+            timeout=timeout,
         )
         return r.json() if r.ok else None
     except (requests.RequestException, ValueError):
         return None
+
+
+def _vm_post_json(path, body, user=None, timeout=15):
+    """POST JSON to the agent without a Flask request in hand (Discord bot path).
+    Returns (http_status, payload dict)."""
+    headers = _rbac_headers(user)
+    headers["Content-Type"] = "application/json"
+    try:
+        r = requests.post(
+            VM_BASE + path,
+            data=json.dumps(body or {}),
+            auth=(PANEL_USER, PANEL_PASSWORD),
+            headers=headers,
+            timeout=timeout,
+        )
+    except requests.RequestException as e:
+        print(f"vm unreachable (post {path}): {e}")
+        return 502, {"ok": False, "error": "vm unreachable"}
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, {"ok": r.ok, "error": None if r.ok else (r.text or "")[:200]}
 
 
 def _proxy(request, path, method, user, timeout=30):
@@ -661,7 +697,13 @@ def _h_overview(request, user, path, method):
         st = _vm_status()
     except Exception as e:  # noqa: BLE001
         print(f"vm status check failed (overview): {e}")
-        return _json({"ok": False, "error": "status check failed", "vm": {"status": "UNKNOWN", "ip": VM_IP}})
+        return _json(
+            {
+                "ok": False,
+                "error": "status check failed",
+                "vm": {"status": "UNKNOWN", "ip": VM_IP, "game_port": GAME_PORT},
+            }
+        )
     server = None
     if st == "RUNNING":
         server = {
@@ -669,7 +711,7 @@ def _h_overview(request, user, path, method):
             "metrics": _vm_get_json("/api/rest/metrics", user),
             "players": (_vm_get_json("/api/rest/players", user) or {}).get("players", []),
         }
-    return _ok({"vm": {"status": st, "ip": VM_IP}, "server": server})
+    return _ok({"vm": {"status": st, "ip": VM_IP, "game_port": GAME_PORT}, "server": server})
 
 
 def _h_watchdog_get(request, user, path, method):
@@ -707,7 +749,7 @@ def _h_roles(request, user, path, method):
 
 def _h_vm_status(request, user, path, method):
     try:
-        return _ok({"status": _vm_status(), "ip": VM_IP})
+        return _ok({"status": _vm_status(), "ip": VM_IP, "game_port": GAME_PORT})
     except Exception as e:  # noqa: BLE001
         print(f"vm status check failed (vm/status): {e}")
         return _json({"ok": False, "error": "status check failed", "status": "UNKNOWN"}, 500)
@@ -732,6 +774,106 @@ def _h_proxy(request, user, path, method):
 def _h_proxy_long(request, user, path, method):
     # switching/backing-up a world tars + uploads: allow more time.
     return _proxy(request, path, method, user, timeout=280)
+
+
+# ---------------------------------------------------------------------------
+# Discord bot ops — the actions discord_bot.py invokes. Kept here (not in
+# discord_bot.py) so all VM/GCS access stays in one module and the bot file is
+# pure protocol. Every method takes the caller's pseudo-user so the agent sees
+# signed RBAC headers for the actual Discord user.
+# ---------------------------------------------------------------------------
+
+# Discord kills an interaction that isn't answered in ~3s: keep agent calls
+# short and fan them out instead of chaining four 15s timeouts.
+_DISCORD_TIMEOUT = 2.5
+
+
+class _DiscordOps:
+    def overview(self, user, fast=False):
+        out = {"status": "UNKNOWN", "ip": VM_IP, "port": GAME_PORT}
+        try:
+            out["status"] = _vm_status()
+        except Exception as e:  # noqa: BLE001
+            print(f"vm status check failed (discord): {e}")
+            return out
+        if fast or out["status"] != "RUNNING":
+            return out
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        paths = {
+            "info": "/api/rest/info",
+            "metrics": "/api/rest/metrics",
+            "players": "/api/rest/players",
+            "settings": "/api/rest/settings",
+        }
+        with ThreadPoolExecutor(max_workers=len(paths)) as pool:
+            futures = {
+                key: pool.submit(_vm_get_json, p, user, _DISCORD_TIMEOUT) for key, p in paths.items()
+            }
+            results = {key: f.result() for key, f in futures.items()}
+        out["info"] = results["info"] or {}
+        out["metrics"] = results["metrics"] or {}
+        out["settings"] = results["settings"] or {}
+        out["players"] = (results["players"] or {}).get("players", [])
+        return out
+
+    def vm_start(self):
+        return _vm_start()
+
+    def vm_stop(self):
+        return _vm_stop()
+
+    def rest(self, endpoint, body, user):
+        """POST a Palworld REST command through the agent. 503 when the VM is off."""
+        try:
+            if _vm_status() != "RUNNING":
+                return 503, {"ok": False, "error": "vm_offline"}
+        except Exception as e:  # noqa: BLE001
+            print(f"vm status check failed (discord rest {endpoint}): {e}")
+            return 502, {"ok": False, "error": "status check failed"}
+        return _vm_post_json(f"/api/rest/{endpoint}", body, user, timeout=_DISCORD_TIMEOUT)
+
+    def user_create(self, username, password, role):
+        return _discord_user_create(username, password, role)
+
+    def user_list(self):
+        return _users_public(_load_users())
+
+    def user_delete(self, username):
+        return _discord_user_delete(username)
+
+
+def _discord_user_create(username, password, role):
+    """Create a panel user (never overwrite an existing one from Discord)."""
+    if role != "custom" and role not in _load_roles().get("roles", {}):
+        return {"ok": False, "error": f"unknown role {role!r}"}
+
+    def mutate(data):
+        users = data.setdefault("users", {})
+        if username in users:
+            return False, {"ok": False, "error": "user already exists"}
+        users[username] = _new_user(password, [], role=role)
+        return True, {"ok": True}
+
+    res = _update(USERS_OBJECT, _seed_users, mutate)
+    # _update's own conflict path returns an HTTP tuple, not a dict.
+    return res if isinstance(res, dict) else {"ok": False, "error": "concurrent update, retry"}
+
+
+def _discord_user_delete(username):
+    def mutate(data):
+        users = data.setdefault("users", {})
+        if username not in users:
+            return False, {"ok": False, "error": "user not found"}
+        remaining = {u: r for u, r in users.items() if u != username}
+        if not any("users" in _effective_perms(r) for r in remaining.values()):
+            return False, {"ok": False, "error": "cannot delete the last user manager"}
+        del users[username]
+        return True, {"ok": True}
+
+    res = _update(USERS_OBJECT, _seed_users, mutate)
+    return res if isinstance(res, dict) else {"ok": False, "error": "concurrent update, retry"}
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +963,11 @@ def coordinator(request):
     # --- unauthenticated login endpoint: issues the session token ---
     if path == "/api/login" and method == "POST":
         return _h_login(request)
+
+    # --- Discord interactions: authenticated by Ed25519 signature, not by a
+    # session token (Discord can't send one). 404 while the bot is unconfigured.
+    if path == "/api/discord/interactions" and method == "POST":
+        return discord_bot.handle(request, _DiscordOps())
 
     # --- token-authed endpoints for the VM watchdog (no user login) ---
     tok = request.headers.get("X-Internal-Token") or ""

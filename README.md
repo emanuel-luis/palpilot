@@ -37,6 +37,7 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 - **Settings editor** — schema-aware, searchable editor for `PalWorldSettings.ini`, plus a raw editor.
 - **In-game commands** — announce, kick, ban/unban, save, and restart/stop the game (without powering off the VM).
 - **Users, roles & permissions** — session-based login; assign users a role (owner/operator/moderator/viewer or a custom one) built from granular per-feature permissions.
+- **Discord bot** — `/palworld status|address|players|start` for players and `/paladmin announce|kick|ban|shutdown|user-create|…` for admins, mapped from Discord roles to the same permissions. Serverless: no bot process to host. See **[`docs/DISCORD.md`](docs/DISCORD.md)**.
 
 ---
 
@@ -44,6 +45,7 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 
 ```
   Browser ──HTTPS──▶  Coordinator  (Cloud Function, always-on)
+  Discord ──signed──▶  • slash commands (Ed25519-verified interactions endpoint)
                       • single-page console (built, self-contained)
                       • session-token auth, users/roles, watchdog config
                       • start/stop the VM
