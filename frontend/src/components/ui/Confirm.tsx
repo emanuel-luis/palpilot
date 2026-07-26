@@ -7,7 +7,10 @@
 // handed to window.confirm: on first paint the host's effect hasn't run yet, and
 // silently falling back would pop an unstyled browser dialog.
 import { useEffect, useRef, useState } from "react";
+import { AlertTriangle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { t } from "@/i18n/en";
+import { cn } from "@/lib/cn";
 
 type InputSpec = { label: string; defaultValue?: string; placeholder?: string; required?: boolean };
 
@@ -97,41 +100,64 @@ export function ConfirmHost() {
   const blocked = !!p.input?.required && !value.trim();
 
   return (
-    <div className="dialog-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) settle(false, ""); }}>
+    <div
+      className="fixed inset-0 z-[200] grid place-items-center bg-black/55 p-4 backdrop-blur-sm"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) settle(false, ""); }}
+    >
       <div
-        className="dialog"
+        className="glass w-full max-w-md rounded-xl border border-line/70 p-5 shadow-pop animate-fade-up"
         role="dialog"
         aria-modal="true"
         aria-label={p.title || p.message}
         ref={dialogRef}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {p.title && <h3>{p.title}</h3>}
-        <div className="dialog-body">{p.message}</div>
-        {p.input && (
-          <div className="field" style={{ marginBottom: 20 }}>
-            <label className="field-label" htmlFor="dialog-input">{p.input.label}</label>
+        <div className="flex items-start gap-3">
+          {p.danger ? (
+            <span aria-hidden className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-danger/12 text-danger">
+              <AlertTriangle className="size-4" />
+            </span>
+          ) : null}
+          <div className="min-w-0 flex-1">
+            {p.title ? <h2 className="text-base font-semibold tracking-tight">{p.title}</h2> : null}
+            {/* pre-line so callers can use blank lines to separate a consequence
+                from the mitigation without needing markup. */}
+            <p className={cn("whitespace-pre-line text-sm leading-relaxed text-muted", p.title && "mt-1.5")}>
+              {p.message}
+            </p>
+          </div>
+        </div>
+
+        {p.input ? (
+          <div className="mt-4">
+            <label htmlFor="dialog-input" className="mb-1.5 block text-xs font-medium">
+              {p.input.label}
+            </label>
             <input
               id="dialog-input"
               ref={inputRef}
-              className="input"
+              className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               value={value}
               placeholder={p.input.placeholder}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !blocked) { e.preventDefault(); settle(true, value); } }}
             />
           </div>
-        )}
-        <div className="dialog-actions">
-          <button className="btn" onClick={() => settle(false, "")}>{p.cancelLabel || t("common.cancel")}</button>
-          <button
+        ) : null}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => settle(false, "")}>
+            {p.cancelLabel || t("common.cancel")}
+          </Button>
+          <Button
             ref={okRef}
-            className={p.danger ? "btn btn-danger" : "btn btn-primary"}
+            size="sm"
+            variant={p.danger ? "danger" : "primary"}
             disabled={blocked}
             onClick={() => settle(true, value)}
           >
             {p.confirmLabel || t("common.confirm")}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
