@@ -5,6 +5,12 @@ import { toast } from "@/components/ui/Toast";
 import { confirm } from "@/components/ui/Confirm";
 import { t } from "@/i18n/en";
 import { cn } from "@/lib/cn";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { Pencil, Trash2 } from "lucide-react";
 
 const KNOWN_PERMS = ["view","power","saves","mods","settings","watchdog","commands","users"];
 
@@ -101,7 +107,10 @@ export function UsersView() {
 
   return (
     <div className="stack-lg">
-      <h1>{t("users.title")}</h1>
+      <PageHeader
+        title={t("users.title")}
+        description="Roles are permission bundles. Choose Custom to grant permissions to one person directly."
+      />
       <div className="panel">
         <div className="panel-header"><div className="panel-title">{editing ? t("users.editTitle", { name: editing }) : t("users.addTitle")}</div></div>
         <div className="panel-body stack">
@@ -126,28 +135,76 @@ export function UsersView() {
           </div>
         </div>
       </div>
-      <div className="panel">
-        <div className="panel-header"><div className="panel-title">{t("users.listTitle")}</div></div>
-        <div className="panel-body"><div className="table-scroll"><table className="table">
-          <thead><tr><th>{t("users.colUsername")}</th><th style={{ width: 140 }}>{t("users.colRole")}</th><th>{t("users.colPerms")}</th><th style={{ width: 180 }}>{t("users.colActions")}</th></tr></thead>
-          <tbody>
-            {users.length === 0 && <tr><td colSpan={4}><div className="empty">{t("users.noUsers")}</div></td></tr>}
-            {users.map((u: any) => (
-              <tr key={u.username}>
-                <td><strong>{u.username}</strong>{u.username === s.user && <span className="field-hint" style={{ marginLeft: 6 }}>{t("users.you")}</span>}</td>
-                <td><span className="pill">{u.role}</span></td>
-                <td><div className="row-tight" style={{ flexWrap: "wrap", gap: 4 }}>
-                  {(u.effective_perms || u.perms || []).map((p: string) => <span key={p} className="pill" style={{ fontSize: 11 }}>{permLabel(p)}</span>)}
-                </div></td>
-                <td><div className="row-tight">
-                  <button className="btn btn-sm" onClick={() => setEditing(u.username)}>{t("common.edit")}</button>
-                  <button className="btn btn-sm btn-danger" onClick={() => deleteUser(u.username)} disabled={u.username === s.user}>{t("common.delete")}</button>
-                </div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table></div></div>
-      </div>
+      <Card>
+        <CardHeader><CardTitle>{t("users.listTitle")}</CardTitle></CardHeader>
+        <CardContent className="pt-0">
+          <DataTable
+            rows={users as any[]}
+            columns={[
+              {
+                key: "username",
+                header: t("users.colUsername"),
+                sortable: true,
+                value: (u: any) => u.username,
+                cell: (u: any) => (
+                  <span className="font-medium">
+                    {u.username}
+                    {u.username === s.user ? (
+                      <span className="ml-1.5 text-2xs font-normal text-faint">{t("users.you")}</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              {
+                key: "role",
+                header: t("users.colRole"),
+                sortable: true,
+                width: "140px",
+                value: (u: any) => u.role,
+                // A custom role means the per-user perms list is authoritative,
+                // which is worth flagging rather than reading like any other role.
+                cell: (u: any) => (
+                  <Badge tone={u.role === "custom" ? "warn" : "neutral"}>{u.role}</Badge>
+                ),
+              },
+              {
+                key: "perms",
+                header: t("users.colPerms"),
+                // Show what they can actually do, not the raw override.
+                value: (u: any) => (u.effective_perms || u.perms || []).join(" "),
+                cell: (u: any) => (
+                  <div className="flex flex-wrap gap-1">
+                    {(u.effective_perms || u.perms || []).map((p: string) => (
+                      <Badge key={p} tone="neutral">{permLabel(p)}</Badge>
+                    ))}
+                  </div>
+                ),
+              },
+            ] as Column<any>[]}
+            rowKey={(u: any) => u.username}
+            searchable={users.length > 8}
+            searchPlaceholder="Search users"
+            caption="Console users and their effective permissions"
+            empty={t("users.noUsers")}
+            actions={(u: any) => (
+              <>
+                <Button size="sm" variant="secondary" onClick={() => setEditing(u.username)}>
+                  <Pencil /> {t("common.edit")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={u.username === s.user}
+                  title={u.username === s.user ? t("users.cantDeleteSelf") : undefined}
+                  onClick={() => deleteUser(u.username)}
+                >
+                  <Trash2 /> {t("common.delete")}
+                </Button>
+              </>
+            )}
+          />
+        </CardContent>
+      </Card>
       <div className="panel">
         <div className="panel-header"><div className="panel-title">{editingRole ? t("users.roles.editTitle", { name: editingRole }) : t("users.roles.addTitle")}</div></div>
         <div className="panel-body stack">
