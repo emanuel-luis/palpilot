@@ -17,7 +17,7 @@ import {
 import { session } from "@/stores/session";
 import { apiPost } from "@/lib/api";
 import { toast } from "@/components/ui/Toast";
-import { confirm } from "@/components/ui/Confirm";
+import { choose, confirm } from "@/components/ui/Confirm";
 import { PageHeader, OfflineNotice } from "@/components/layout/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -312,20 +312,30 @@ export function SettingsPage() {
     if (!changedKeys.length) { toast.info("Nothing changed."); return; }
 
     // Every key in this file is read at process start, so a restart is always
-    // required for the change to mean anything. Say that, and offer to do it well.
-    const answer = await confirm({
+    // required for the change to mean anything. Rather than deciding for the
+    // user, offer both ways forward — writing the file now and restarting later
+    // is a legitimate choice when players are mid-session.
+    const answer = await choose({
       title: `Apply ${changedKeys.length} change${changedKeys.length === 1 ? "" : "s"}?`,
       message:
         "Palworld reads its settings once when the server starts, so these take effect on the next restart.\n\n" +
-        "A safe restart warns players, saves the world, waits, then restarts.",
+        "A safe restart warns players, saves the world, waits, then restarts. " +
+        "Saving without restarting writes the file now and leaves the running server as it is.",
+      altLabel: "Save without restarting",
       confirmLabel: "Save and safe restart",
       cancelLabel: "Cancel",
     });
-    if (!answer) return;
+    if (answer === "cancel") return;
 
     const r = await save.mutateAsync({ options: changed, restart: false });
     if (!r.ok) { toast.err(r.error || "Couldn't save the settings."); return; }
-    toast.ok(`${changedKeys.length} setting${changedKeys.length === 1 ? "" : "s"} saved.`);
+
+    const n = `${changedKeys.length} setting${changedKeys.length === 1 ? "" : "s"}`;
+    if (answer === "alt") {
+      toast.ok(`${n} saved. They apply the next time the server restarts.`);
+      return;
+    }
+    toast.ok(`${n} saved.`);
 
     // Announce → save → grace → restart. Best effort: a missing `commands`
     // permission shouldn't block the restart the user just asked for.

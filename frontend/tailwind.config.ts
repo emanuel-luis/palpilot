@@ -24,7 +24,7 @@ export default {
         "surface-2": "hsl(var(--surface-2) / <alpha-value>)",
         line: "hsl(var(--line) / <alpha-value>)",
         fg: "hsl(var(--fg) / <alpha-value>)",
-        muted: "hsl(var(--muted) / <alpha-value>)",
+        muted: "hsl(var(--fg-muted) / <alpha-value>)",
         faint: "hsl(var(--faint) / <alpha-value>)",
         signal: "hsl(var(--signal) / <alpha-value>)",
         "signal-fg": "hsl(var(--signal-fg) / <alpha-value>)",

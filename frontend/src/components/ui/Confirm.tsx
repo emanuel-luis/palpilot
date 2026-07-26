@@ -19,17 +19,22 @@ type Opts = {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** A second affirmative action, for decisions that genuinely have two ways
+   *  forward (e.g. save now vs save and restart). Returned as "alt". */
+  altLabel?: string;
   danger?: boolean;
   /** When set, the dialog renders a text field and prompt() returns its value. */
   input?: InputSpec;
 };
 
-type Pending = Opts & { resolve: (v: { ok: boolean; value: string }) => void };
+export type Choice = "cancel" | "confirm" | "alt";
+
+type Pending = Opts & { resolve: (v: { choice: Choice; value: string }) => void };
 
 let setter: ((p: Pending | null) => void) | null = null;
 const queue: Pending[] = [];
 
-function raise(opts: Opts): Promise<{ ok: boolean; value: string }> {
+function raise(opts: Opts): Promise<{ choice: Choice; value: string }> {
   return new Promise((resolve) => {
     const pending: Pending = { ...opts, resolve };
     if (setter) setter(pending);
@@ -39,13 +44,19 @@ function raise(opts: Opts): Promise<{ ok: boolean; value: string }> {
 
 /** Yes/no. Resolves true only if the user confirmed. */
 export async function confirm(opts: Opts): Promise<boolean> {
-  return (await raise(opts)).ok;
+  return (await raise(opts)).choice === "confirm";
+}
+
+/** Three-way decision: which button was pressed. Use when there are genuinely
+ *  two ways forward and forcing one into a checkbox would hide it. */
+export async function choose(opts: Opts & { altLabel: string }): Promise<Choice> {
+  return (await raise(opts)).choice;
 }
 
 /** Text input. Resolves the trimmed string, or null if cancelled/left empty. */
 export async function prompt(opts: Opts & { input: InputSpec }): Promise<string | null> {
   const r = await raise({ ...opts, input: { required: true, ...opts.input } });
-  if (!r.ok) return null;
+  if (r.choice !== "confirm") return null;
   const v = r.value.trim();
   return v || null;
 }
@@ -68,11 +79,11 @@ export function ConfirmHost() {
 
   useEffect(() => { setValue(p?.input?.defaultValue ?? ""); }, [p]);
 
-  function settle(ok: boolean, v: string) {
+  function settle(choice: Choice, v: string) {
     const pending = p;
     if (queue.length) setP(queue.shift()!);
     else { setP(null); restoreRef.current?.focus?.(); restoreRef.current = null; }
-    pending?.resolve({ ok, value: v });
+    pending?.resolve({ choice, value: v });
   }
 
   useEffect(() => {
@@ -81,7 +92,7 @@ export function ConfirmHost() {
     (p.input ? inputRef.current : okRef.current)?.focus();
 
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); settle(false, ""); return; }
+      if (e.key === "Escape") { e.preventDefault(); settle("cancel", ""); return; }
       if (e.key !== "Tab") return;
       // The page behind the dialog is not inert, so keep Tab inside it.
       const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
@@ -102,7 +113,7 @@ export function ConfirmHost() {
   return (
     <div
       className="fixed inset-0 z-[200] grid place-items-center bg-black/55 p-4 backdrop-blur-sm"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) settle(false, ""); }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) settle("cancel", ""); }}
     >
       <div
         className="glass w-full max-w-md rounded-xl border border-line/70 p-5 shadow-pop animate-fade-up"
@@ -140,21 +151,26 @@ export function ConfirmHost() {
               value={value}
               placeholder={p.input.placeholder}
               onChange={(e) => setValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !blocked) { e.preventDefault(); settle(true, value); } }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !blocked) { e.preventDefault(); settle("confirm", value); } }}
             />
           </div>
         ) : null}
 
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => settle(false, "")}>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => settle("cancel", "")}>
             {p.cancelLabel || t("common.cancel")}
           </Button>
+          {p.altLabel ? (
+            <Button variant="secondary" size="sm" onClick={() => settle("alt", value)}>
+              {p.altLabel}
+            </Button>
+          ) : null}
           <Button
             ref={okRef}
             size="sm"
             variant={p.danger ? "danger" : "primary"}
             disabled={blocked}
-            onClick={() => settle(true, value)}
+            onClick={() => settle("confirm", value)}
           >
             {p.confirmLabel || t("common.confirm")}
           </Button>
