@@ -10,7 +10,7 @@
 import { onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { apiDelete, apiDownload, apiGet, apiPost } from "../api.js";
+import { apiDelete, apiDownload, apiGet, apiPost, apiUpload } from "../api.js";
 import Badge from "../components/ui/Badge.vue";
 import Btn from "../components/ui/Btn.vue";
 import Card from "../components/ui/Card.vue";
@@ -131,6 +131,83 @@ async function downloadBackup(slot, backup) {
   if (!r.ok) toast.error(r.error || t("saves.downloadFailed"));
 }
 
+// ---------------------------------------------------------------------------
+// import (upload) a world — the inverse of "Download". Accepts the .tar.gz this
+// view produces and a plain .zip of a world folder. The archive is sliced into
+// ordered parts because the coordinator is a Cloud Function and Cloud Run caps
+// a request body at 32 MiB; the agent reassembles it on the VM's own disk and
+// registers it as a NEW slot (never overwriting a world you already have).
+// ---------------------------------------------------------------------------
+
+const fileInput = ref(null);
+const upload = reactive({ busy: false, pct: 0, name: "" });
+
+const UPLOAD_ACCEPT = ".tar.gz,.tgz,.zip";
+const DEFAULT_PART_BYTES = 20 * 1024 * 1024;
+
+function pickUpload() {
+  fileInput.value?.click();
+}
+
+function onUploadPicked(event) {
+  const file = event.target.files?.[0];
+  event.target.value = ""; // so picking the same file twice still fires
+  if (!file) return;
+  openImport(file);
+}
+
+async function doUpload(file, name) {
+  const init = await apiPost("/api/saves/upload", { filename: file.name, name }, { key: "saves" });
+  if (!init.ok) {
+    toast.error(init.error || t("saves.uploadFailed"));
+    return;
+  }
+  const id = init.data.upload_id;
+  const partBytes = init.data.part_max_bytes || DEFAULT_PART_BYTES;
+  if (init.data.max_bytes && file.size > init.data.max_bytes) {
+    toast.error(t("saves.uploadTooBig", { max: fmtSize(init.data.max_bytes) }));
+    await apiDelete(`/api/saves/upload/${encodeURIComponent(id)}`, { key: "saves-upload" });
+    return;
+  }
+
+  upload.busy = true;
+  upload.pct = 0;
+  upload.name = file.name;
+  try {
+    let sent = 0;
+    let index = 0;
+    while (sent < file.size) {
+      const slice = file.slice(sent, Math.min(sent + partBytes, file.size));
+      const r = await apiUpload(`/api/saves/upload/${encodeURIComponent(id)}/part`, slice, {
+        key: "saves-upload",
+        query: `index=${index}`,
+      });
+      if (!r.ok) {
+        toast.error(r.error || t("saves.uploadFailed"));
+        await apiDelete(`/api/saves/upload/${encodeURIComponent(id)}`, { key: "saves-upload" });
+        return;
+      }
+      sent += slice.size;
+      index += 1;
+      upload.pct = Math.round((sent / file.size) * 100);
+    }
+    const fin = await apiPost(`/api/saves/upload/${encodeURIComponent(id)}/finish`, { name }, {
+      key: "saves-upload",
+    });
+    if (fin.ok) {
+      toast.ok(t("saves.uploadDone", { name: fin.data.name }));
+      if (fin.data.note) toast.ok(fin.data.note);
+      loadSlots();
+    } else {
+      toast.error(fin.error || t("saves.uploadFailed"));
+    }
+  } finally {
+    upload.busy = false;
+    upload.pct = 0;
+    upload.name = "";
+  }
+}
+
 async function deleteSlot(slot) {
   const ok = await confirm({
     message: t("saves.confirmDelete", { name: slot.name }),
@@ -168,7 +245,16 @@ async function loadBackups(slot) {
 // clone / rename — single name-prompt modal shared by both flows
 // ---------------------------------------------------------------------------
 
-const promptModal = reactive({ open: false, mode: "", slot: null, backup: null, value: "" });
+const promptModal = reactive({ open: false, mode: "", slot: null, backup: null, file: null, value: "" });
+
+function openImport(file) {
+  promptModal.open = true;
+  promptModal.mode = "import";
+  promptModal.slot = null;
+  promptModal.file = file;
+  // strip the archive extension so the suggested slot name reads like a name
+  promptModal.value = file.name.replace(/\.(tar\.gz|tgz|zip)$/i, "");
+}
 
 function openClone(slot) {
   promptModal.open = true;
@@ -197,6 +283,7 @@ function closePrompt() {
 }
 
 const promptTitle = () => {
+  if (promptModal.mode === "import") return t("saves.uploadModalTitle", { file: promptModal.file?.name || "" });
   if (!promptModal.slot) return "";
   if (promptModal.mode === "clone") return t("saves.cloneModalTitle", { name: promptModal.slot.name });
   if (promptModal.mode === "rename") return t("saves.renameModalTitle", { name: promptModal.slot.name });
@@ -206,6 +293,7 @@ const promptTitle = () => {
 const promptFieldLabel = () => {
   if (promptModal.mode === "clone") return t("saves.cloneNameLabel");
   if (promptModal.mode === "rename") return t("saves.renameNameLabel");
+  if (promptModal.mode === "import") return t("saves.uploadNameLabel");
   return t("saves.restoreAsNewNameLabel");
 };
 
@@ -213,6 +301,14 @@ async function submitPrompt() {
   const name = promptModal.value.trim();
   if (!name) return;
   const slot = promptModal.slot;
+
+  if (promptModal.mode === "import") {
+    const file = promptModal.file;
+    closePrompt();
+    promptModal.file = null;
+    await doUpload(file, name);
+    return;
+  }
 
   if (promptModal.mode === "clone") {
     const r = await apiPost(`/api/saves/${encodeURIComponent(slot.guid)}/clone`, { name }, { key: "saves" });
@@ -301,6 +397,25 @@ const BACKUP_COLUMNS = [
           </Field>
           <Btn type="submit" busy-key="saves">{{ t("saves.create") }}</Btn>
         </form>
+      </Card>
+
+      <Card :title="t('saves.uploadTitle')" :hint="t('saves.uploadHint')">
+        <div class="row">
+          <Btn variant="ghost" :loading="upload.busy" @click="pickUpload">{{ t("saves.upload") }}</Btn>
+          <p v-if="upload.busy" class="muted upload-progress" role="status" aria-live="polite">
+            {{ t("saves.uploading", { file: upload.name, pct: upload.pct }) }}
+          </p>
+        </div>
+        <div v-if="upload.busy" class="upload-bar" :aria-label="t('saves.upload')">
+          <span class="upload-bar-fill" :style="{ width: `${upload.pct}%` }"></span>
+        </div>
+        <input
+          ref="fileInput"
+          class="sr-only"
+          type="file"
+          :accept="UPLOAD_ACCEPT"
+          @change="onUploadPicked"
+        />
       </Card>
 
       <Card :title="t('saves.listTitle', { count: slots.length })" :hint="t('saves.listHint')">
@@ -482,6 +597,23 @@ const BACKUP_COLUMNS = [
 }
 .row .grow {
   flex: 1;
+}
+.upload-progress {
+  margin: 0;
+  font-size: 12px;
+}
+.upload-bar {
+  margin-top: 10px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.upload-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
 }
 .data-table {
   width: 100%;
