@@ -942,6 +942,45 @@ def _method_matches(spec, method):
 
 
 # ---------------------------------------------------------------------------
+# Audit trail
+#
+# One structured line per state change, on stdout. Cloud Run forwards stdout to
+# Cloud Logging, which parses a JSON line into `jsonPayload` — so this is
+# queryable with no new infrastructure, no bucket writes racing the
+# read-modify-write cycle used for users.json, and it survives instance churn.
+#
+# Query it with:
+#   gcloud logging read 'jsonPayload.audit=true' --project <p> --limit 50
+#
+# Rules: every mutation gets a record; reads do not (they would bury the
+# mutations in noise). Credentials NEVER appear — usernames, paths, methods and
+# status codes only.
+# ---------------------------------------------------------------------------
+
+
+def _status_of(resp) -> int:
+    """Pull the status code out of a handler's return value."""
+    if isinstance(resp, tuple) and len(resp) >= 2:
+        try:
+            return int(resp[1])
+        except (TypeError, ValueError):
+            return 200
+    return 200
+
+
+def _audit(event: str, user: str = "-", **fields) -> None:
+    rec = {"audit": True, "event": event, "user": user or "-"}
+    for k, v in fields.items():
+        if v is not None:
+            rec[k] = v
+    try:
+        print(json.dumps(rec, separators=(",", ":"), default=str), flush=True)
+    except Exception as e:  # noqa: BLE001
+        # An audit record must never break the request it describes.
+        print(f"audit serialization failed for {event}: {e}", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # static console (multi-file build)
 #
 # The frontend now emits hashed chunks into coordinator/assets/ instead of one
@@ -1059,7 +1098,17 @@ def coordinator(request):
 
     # --- unauthenticated login endpoint: issues the session token ---
     if path == "/api/login" and method == "POST":
-        return _h_login(request)
+        resp = _h_login(request)
+        status = _status_of(resp)
+        # Username only — never the password, and never the issued token.
+        attempted = ((request.get_json(silent=True) or {}).get("username") or "").strip()
+        _audit(
+            "login" if status == 200 else "login.denied",
+            attempted or "-",
+            status=status,
+            ip=_client_ip(request),
+        )
+        return resp
 
     # --- Discord interactions: authenticated by Ed25519 signature, not by a
     # session token (Discord can't send one). 404 while the bot is unconfigured.
@@ -1071,7 +1120,11 @@ def coordinator(request):
     if INTERNAL_TOKEN and hmac.compare_digest(tok, INTERNAL_TOKEN):
         if path == "/api/vm/stop" and method == "POST":
             if not _vm_stop():
+                _audit("change", "watchdog", method=method, path=path, status=502)
                 return _err("failed to stop VM", 502)
+            # The single most cost-relevant event in the product: record who
+            # powered the machine down and when.
+            _audit("change", "watchdog", method=method, path=path, status=200, reason="idle")
             return _ok({"stopping": True, "by": "watchdog"})
         if path == "/api/watchdog-config" and method == "GET":
             return _ok(_load_wd())
@@ -1088,9 +1141,23 @@ def coordinator(request):
         if not _method_matches(method_spec, method):
             continue
         if required_perm and required_perm not in perms:
+            # A refused attempt is worth recording — it is how you notice a
+            # permission set that is wrong, or someone probing.
+            _audit("denied", user["name"], method=method, path=path, perm=required_perm)
             return _err("forbidden", 403)
-        return handler(request, user, path, method)
+        resp = handler(request, user, path, method)
+        if method != "GET":
+            _audit(
+                "change",
+                user["name"],
+                method=method,
+                path=path,
+                perm=required_perm,
+                status=_status_of(resp),
+            )
+        return resp
 
+    _audit("not_found", user["name"], method=method, path=path)
     return _err("not found", 404, path=path)
 
 
