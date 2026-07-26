@@ -918,6 +918,10 @@ ROUTES = [
     # Palworld REST passthrough
     ("GET", _prefix("/api/rest/"), "view", _h_proxy),
     ("POST", _prefix("/api/rest/"), "commands", _h_proxy),
+    # host metrics + game logs (read-only; both answer 503 vm_offline while the
+    # VM is down, which is the correct "nothing to show" signal)
+    ("GET", _prefix("/api/metrics"), "view", _h_proxy),
+    ("GET", _prefix("/api/logs"), "view", _h_proxy),
     # save slots (file manipulation on the VM; covers list/create/activate/
     # backup/backups/restore/delete)
     ("GET", _prefix("/api/saves"), "view", _h_proxy_long),
