@@ -192,11 +192,16 @@ resource "google_cloudfunctions2_function" "coordinator" {
 # Remove the function (and its zip/archive resources) after the VM has rebooted
 # onto the new URL and the Discord endpoint has been re-registered.
 #
+// Named for what `gcloud run deploy --source` looks for. Creating it here means
+// the CI deployer needs only roles/artifactregistry.writer -- it was failing with
+// "artifactregistry.repositories.create denied" because --source tries to create
+// this repo itself on first use. Pre-creating it keeps CI least-privilege instead
+// of granting it artifactregistry.admin.
 resource "google_artifact_registry_repository" "coordinator" {
   location      = var.region
-  repository_id = "palpilot"
+  repository_id = "cloud-run-source-deploy"
   format        = "DOCKER"
-  description   = "PalPilot coordinator container images"
+  description   = "PalPilot coordinator container images (built by gcloud run deploy --source)"
 
   depends_on = [google_project_service.apis]
 }

@@ -155,7 +155,11 @@ class TestReadLog(unittest.TestCase):
         panel.LOG_MAX_LINES = self._orig_max
 
     def write(self, text, mode="w"):
-        with open(self.path, mode, encoding="utf-8") as f:
+        # newline="" keeps a line feed one byte on every platform. These
+        # assertions are about byte offsets, and Windows text mode expands LF to
+        # CRLF -- which made a size comparison here pass locally for the wrong
+        # reason while failing on CI.
+        with open(self.path, mode, encoding="utf-8", newline="") as f:
             f.write(text)
 
     def test_missing_directory_is_empty_not_an_error(self):
@@ -187,12 +191,27 @@ class TestReadLog(unittest.TestCase):
         self.assertEqual(nxt["lines"], ["c", "d"])
 
     def test_truncation_is_flagged_so_the_client_can_resync(self):
-        self.write("a\nb\nc\n")
+        # Rotation is detected by the file shrinking below the cursor, so the
+        # replacement must be genuinely shorter. Note the limitation this implies:
+        # a rewrite to the SAME byte length is invisible to a cursor alone, and
+        # would need a content fingerprint to catch.
+        self.write("aaaa\nbbbb\ncccc\ndddd\n")
         first = panel.read_log()
-        self.write("fresh\n")  # rotated: now shorter than the cursor
+        self.assertGreater(first["cursor"], 6)
+        self.write("fresh\n")
         r = panel.read_log(cursor=first["cursor"])
         self.assertTrue(r["rotated"])
         self.assertEqual(r["lines"], ["fresh"])
+
+    def test_same_size_rewrite_is_a_known_blind_spot(self):
+        # Documenting, not endorsing: this is why the client also clears on an
+        # explicit file switch rather than relying on `rotated` alone.
+        self.write("aaa\nbbb\n")
+        first = panel.read_log()
+        self.write("ccc\nddd\n")  # identical length
+        r = panel.read_log(cursor=first["cursor"])
+        self.assertFalse(r["rotated"])
+        self.assertEqual(r["lines"], [])
 
     def test_unknown_or_traversing_name_is_rejected(self):
         self.write("a\n")
