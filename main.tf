@@ -279,7 +279,7 @@ resource "google_compute_instance" "palworld" {
     runtime-mode = var.runtime_mode
 
     # Coordinator (serverless) + idle watchdog config
-    coordinator-url    = google_cloudfunctions2_function.coordinator.url
+    coordinator-url    = google_cloud_run_v2_service.coordinator.uri
     coordinator-token  = var.internal_token
     idle-poll-seconds  = tostring(var.idle_poll_seconds)
     idle-grace-seconds = tostring(var.idle_grace_seconds)

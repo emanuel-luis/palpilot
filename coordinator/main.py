@@ -942,6 +942,94 @@ def _method_matches(spec, method):
 
 
 # ---------------------------------------------------------------------------
+# static console (multi-file build)
+#
+# The frontend now emits hashed chunks into coordinator/assets/ instead of one
+# inlined document, which is what makes route-level code splitting possible.
+# Two cache policies, deliberately different:
+#   * assets  -> immutable for a year. Safe because Vite puts a content hash in
+#                every filename, so a changed file is a changed URL.
+#   * index   -> no-store. Keeps the original guarantee that a deploy is always
+#                picked up; a cached bundle gated on stale permissions would
+#                silently hide sections of the UI.
+# ---------------------------------------------------------------------------
+
+_STATIC_ROOT = os.path.dirname(os.path.abspath(__file__))
+_ASSETS_ROOT = os.path.join(_STATIC_ROOT, "assets")
+
+_ASSET_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".map": "application/json; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+# Anything that is not the API and not a file request is a client-side route, so
+# a deep link or a reload on it must return the app shell rather than a 404.
+_NON_APP_PREFIXES = ("/api/",)
+
+
+def _is_app_route(path: str) -> bool:
+    if path.startswith(_NON_APP_PREFIXES):
+        return False
+    # A dotted last segment is a file request (favicon.ico, robots.txt); if it
+    # wasn't found under /assets it genuinely doesn't exist, so don't hand it HTML.
+    return "." not in path.rsplit("/", 1)[-1]
+
+
+def _serve_index():
+    try:
+        with open(INDEX_PATH, encoding="utf-8") as f:
+            body = f.read()
+    except OSError as e:  # noqa: BLE001
+        print(f"index read failed: {e}")
+        return ("console unavailable", 500, {"Content-Type": "text/plain; charset=utf-8"})
+    return (
+        body,
+        200,
+        {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store, must-revalidate",
+        },
+    )
+
+
+def _serve_asset(path: str):
+    rel = path[len("/assets/"):]
+    # Resolve, then require containment: a "%2e%2e/" that Flask decoded into ".."
+    # must not be able to walk out of the assets directory.
+    full = os.path.normpath(os.path.join(_ASSETS_ROOT, rel))
+    if not full.startswith(_ASSETS_ROOT + os.sep) or not os.path.isfile(full):
+        return ("not found", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    try:
+        with open(full, "rb") as f:
+            body = f.read()
+    except OSError:
+        return ("not found", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    ext = os.path.splitext(full)[1].lower()
+    return (
+        body,
+        200,
+        {
+            "Content-Type": _ASSET_TYPES.get(ext, "application/octet-stream"),
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # entrypoint
 # ---------------------------------------------------------------------------
 
@@ -951,18 +1039,23 @@ def coordinator(request):
     path = request.path or "/"
     method = request.method
 
-    if path == "/" and method == "GET":
-        with open(INDEX_PATH, encoding="utf-8") as f:
-            # no-store so a browser never serves a stale SPA after a deploy
-            # (a cached old bundle gated on pre-v3 perms would hide sections).
-            return (
-                f.read(),
-                200,
-                {
-                    "Content-Type": "text/html; charset=utf-8",
-                    "Cache-Control": "no-store, must-revalidate",
-                },
-            )
+    # --- the built console: static assets, then an SPA fallback ---------------
+    # Both are PUBLIC and sit above the auth gate on purpose: a <script> or <link>
+    # request carries no bearer token, so a gated asset route would 401 and the
+    # page would never boot. This exposes nothing new -- GET / has always been
+    # public and has always contained the whole application. The API below stays
+    # gated exactly as before.
+    if method == "GET":
+        if path.startswith("/assets/"):
+            return _serve_asset(path)
+        if _is_app_route(path):
+            return _serve_index()
+        if not path.startswith("/api/"):
+            # A file request that isn't an asset genuinely doesn't exist. Answer
+            # 404 rather than falling through to the auth gate, which replies 401
+            # with WWW-Authenticate: Basic -- enough to pop a browser credential
+            # prompt over something as incidental as a missing favicon.
+            return ("not found", 404, {"Content-Type": "text/plain; charset=utf-8"})
 
     # --- unauthenticated login endpoint: issues the session token ---
     if path == "/api/login" and method == "POST":

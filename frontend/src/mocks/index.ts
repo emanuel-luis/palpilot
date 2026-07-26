@@ -24,8 +24,12 @@ export const knobs = {
 };
 
 export async function mockFetch(url: string, init: RequestInit): Promise<Response> {
-  // strip BASE prefix (matches location.pathname stripping in api.ts)
-  const base = location.pathname.replace(/\/+$/, "");
+  // Strip the same prefix api.ts prepends. Deliberately NOT location.pathname:
+  // with the SPA fallback in place that is the current route (/console), not the
+  // mount point, so it would fail to match and every mock route would 404.
+  // Computed from the env var rather than importing BASE, which would make
+  // mocks <-> api a circular import evaluated at module load.
+  const base = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
   const rawPath = url.startsWith(base) ? url.slice(base.length) : url;
   const [path, queryString] = rawPath.split("?");
   const query = new URLSearchParams(queryString || "");

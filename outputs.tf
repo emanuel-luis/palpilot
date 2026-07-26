@@ -20,11 +20,11 @@ output "panel_bucket" {
 
 # URL do painel (coordenador serverless — sempre no ar, mesmo com a VM desligada)
 output "coordinator_url" {
-  value = google_cloudfunctions2_function.coordinator.url
+  value = google_cloud_run_v2_service.coordinator.uri
 }
 
 
 # Cole em Discord Developer Portal -> seu app -> "Interactions Endpoint URL"
 output "discord_interactions_url" {
-  value = "${google_cloudfunctions2_function.coordinator.url}/api/discord/interactions"
+  value = "${google_cloud_run_v2_service.coordinator.uri}/api/discord/interactions"
 }
