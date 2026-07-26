@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { session, useSession } from "@/stores/session";
 import { useHashRoute, navigate } from "@/hooks/useHashRoute";
 import { LoginView } from "@/views/Login";
-import { ConsoleView } from "@/views/Console";
-import { UsersView } from "@/views/Users";
-import { AccountView } from "@/views/Account";
+import { matchRoute } from "@/views/routes";
 import { Toaster } from "@/components/ui/Toast";
 import { ConfirmHost } from "@/components/ui/Confirm";
 import { deriveGameState } from "@/components/StatusPills";
@@ -98,25 +96,35 @@ function Shell({ children }: { children: React.ReactNode }) {
 function Router() {
   const route = useHashRoute();
   const s = useSession();
+
+  const match = matchRoute(route);
   // Permissions aren't known until /api/session answers, and can() is false until
-  // then — so a reload on #/users must WAIT rather than be bounced to /console.
-  const wantsUsers = route.startsWith("/users");
-  const mayUsers = session.can("users");
+  // then — so a reload on a gated route must WAIT rather than be bounced away.
+  const allowed = !!match && (!match.perms.length || match.perms.some((p) => session.can(p)));
 
   useEffect(() => { getTheme(); }, []);
   useEffect(() => {
+    if (!s.ready) return;
     // Redirect as an effect, never during render.
-    if (s.ready && wantsUsers && !mayUsers) navigate("/console");
-  }, [s.ready, wantsUsers, mayUsers]);
+    if (!match) navigate("/console");
+    else if (!allowed) navigate("/console");
+  }, [s.ready, match, allowed]);
 
   if (!s.authed) return <LoginView />;
-  if (!s.ready) return <Shell><BootSkeleton /></Shell>;
-  if (wantsUsers) {
-    if (!mayUsers) return <Shell><BootSkeleton /></Shell>;
-    return <Shell><UsersView /></Shell>;
+  if (!s.ready || !match || !allowed) {
+    return <Shell><BootSkeleton /></Shell>;
   }
-  if (route.startsWith("/account")) return <Shell><AccountView /></Shell>;
-  return <Shell><ConsoleView /></Shell>;
+
+  const Page = match.Component;
+  return (
+    <Shell>
+      {/* Suspense boundary for the lazily-loaded pages. The fallback is shaped
+          like content so navigating doesn't collapse the layout. */}
+      <Suspense fallback={<BootSkeleton />}>
+        <Page />
+      </Suspense>
+    </Shell>
+  );
 }
 
 export default function App() {
