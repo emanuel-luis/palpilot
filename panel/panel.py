@@ -1872,6 +1872,101 @@ def delete_mod(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Per-slot settings
+#
+# Every slot already owns a PalWorldSettings.ini under palworld-slot-configs/,
+# but until now only the ACTIVE one was reachable: POST /api/config writes the
+# live file and snapshots it into whichever slot is active. These two functions
+# make an arbitrary slot's config readable and writable, so a world can be
+# configured before it is ever activated.
+#
+# The active slot is a special case in both directions. Its stored copy is a
+# snapshot, not the source of truth — the live ini is — so reads come from the
+# live file and writes go to the live file and then re-snapshot. Treating them
+# as separate would let the two drift and then silently lose whichever the user
+# wasn't looking at.
+#
+# Safety note: a non-active slot's ini is NOT bootstrapped here, so it can be
+# saved with the REST keys switched off. That's recoverable by design —
+# activate_slot() calls bootstrap() after swapping the ini in, which re-asserts
+# RESTAPIEnabled/RESTAPIPort/AdminPassword before the game starts.
+# ---------------------------------------------------------------------------
+
+
+def read_slot_config(guid: str) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "reason": "validation", "error": "invalid guid"}
+
+    active = get_active_world()
+    if guid == active:
+        raw = read_ini()
+        return {
+            "ok": True, "guid": guid, "active": True, "stored": True,
+            "raw": raw, "options": parse_options(raw), "path": INI_PATH,
+        }
+
+    known = {s["guid"] for s in list_slots().get("slots", [])}
+    if guid not in known:
+        return {"ok": False, "reason": "not_found", "error": "slot not found"}
+
+    path = _slot_config_path(guid)
+    if not os.path.exists(path):
+        # A slot that has never been activated has no stored ini yet. Say so
+        # rather than returning an empty config that looks like "all defaults" —
+        # the UI needs to explain that it will inherit on first activation.
+        return {
+            "ok": True, "guid": guid, "active": False, "stored": False,
+            "raw": "", "options": {}, "path": path,
+        }
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    return {
+        "ok": True, "guid": guid, "active": False, "stored": True,
+        "raw": raw, "options": parse_options(raw), "path": path,
+    }
+
+
+def write_slot_config(guid: str, options: dict | None = None, raw: str | None = None) -> dict:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "reason": "validation", "error": "invalid guid"}
+    if raw is None and not options:
+        return {"ok": False, "reason": "validation", "error": "provide 'raw' or 'options'"}
+
+    active = get_active_world()
+    if guid == active:
+        # Live file is the source of truth for the active slot; keep the stored
+        # snapshot in step so a later activate() doesn't resurrect stale values.
+        new_raw = raw if raw is not None else set_options(read_ini(), options or {})
+        write_ini(new_raw)
+        save_active_config_to_slot(guid)
+        return {"ok": True, "guid": guid, "active": True, "saved": True, "applied_live": True}
+
+    known = {s["guid"] for s in list_slots().get("slots", [])}
+    if guid not in known:
+        return {"ok": False, "reason": "not_found", "error": "slot not found"}
+
+    path = _slot_config_path(guid)
+    if raw is not None:
+        new_raw = raw
+    else:
+        # Start from whatever the slot already stores; if it stores nothing yet,
+        # start from the live config so the edit lands on a complete file rather
+        # than a fragment containing only the changed keys.
+        base = ""
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                base = f.read()
+        if not base.strip():
+            base = read_ini()
+        new_raw = set_options(base, options or {})
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    atomic_write(path, new_raw)
+    _chown_steam(path)
+    return {"ok": True, "guid": guid, "active": False, "saved": True, "applied_live": False}
+
+
+# ---------------------------------------------------------------------------
 # Host metrics + game logs (read-only, unprivileged)
 #
 # Both deliberately avoid new dependencies AND new privileges:
@@ -2429,6 +2524,39 @@ def build_app():
             raise HTTPException(404, "unknown endpoint")
         code, payload = rest_call("POST", endpoint, body or {})
         return JSONResponse(status_code=code, content=payload)
+
+    # ---- per-slot settings ----
+    #
+    # Deliberately under /api/config, not /api/saves: the coordinator gates the
+    # /api/config prefix as view (GET) / settings (POST), which is the right
+    # permission for editing settings. Under /api/saves it would have inherited
+    # the `saves` permission instead, and needed a coordinator route change.
+
+    @app.get("/api/config/slot/{guid}")
+    def get_slot_config(guid: str, _: str = Depends(require("view"))):
+        return _envelope(read_slot_config(guid))
+
+    @app.post("/api/config/slot/{guid}")
+    async def post_slot_config(
+        guid: str,
+        payload: dict,
+        restart: bool = False,
+        _: str = Depends(require("settings")),
+    ):
+        r = write_slot_config(
+            guid,
+            options=(payload or {}).get("options"),
+            raw=(payload or {}).get("raw"),
+        )
+        # A restart only means anything for the slot the game is actually running.
+        if r.get("ok") and restart and r.get("applied_live"):
+            try:
+                restart_service()
+                r["restarted"] = True
+            except subprocess.CalledProcessError as e:
+                r["restarted"] = False
+                r["restart_error"] = (e.stderr or b"").decode()
+        return _envelope(r)
 
     # ---- host metrics + game logs ----
 
