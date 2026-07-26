@@ -921,6 +921,9 @@ ROUTES = [
     # host metrics + game logs (read-only; both answer 503 vm_offline while the
     # VM is down, which is the correct "nothing to show" signal)
     ("GET", _prefix("/api/metrics"), "view", _h_proxy),
+    # POST /api/metrics/flush forces the stats upload; it acts on the server, so
+    # it sits with the other in-game actions rather than under `view`.
+    ("POST", _prefix("/api/metrics"), "commands", _h_proxy),
     ("GET", _prefix("/api/logs"), "view", _h_proxy),
     # save slots (file manipulation on the VM; covers list/create/activate/
     # backup/backups/restore/delete)

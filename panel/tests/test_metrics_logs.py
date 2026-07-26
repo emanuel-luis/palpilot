@@ -340,5 +340,130 @@ class TestSlotConfig(unittest.TestCase):
         r = panel.write_slot_config("NOPE", options={"ExpRate": "2.000000"})
         self.assertFalse(r["ok"])
         self.assertEqual(r["reason"], "not_found")
+
+
+class TestStatsHistory(unittest.TestCase):
+    """Persisted performance history. The failure modes that matter are silent:
+    losing samples on rotation, choking on a torn line after a crash, and
+    dropping local data when the upload fails."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.saved = {
+            "STATS_DIR": panel.STATS_DIR,
+            "STATS_FILE": panel.STATS_FILE,
+            "STATS_MAX_BYTES": panel.STATS_MAX_BYTES,
+            "STATS_MAX_RETURN": panel.STATS_MAX_RETURN,
+            "BACKUP_BUCKET": panel.BACKUP_BUCKET,
+            "_chown_steam": panel._chown_steam,
+            "run": panel.subprocess.run,
+        }
+        panel.STATS_DIR = self.dir
+        panel.STATS_FILE = os.path.join(self.dir, "history.jsonl")
+        panel._chown_steam = lambda *a, **k: None
+        panel._stats_state.update({"last_sync": 0.0, "samples": 0, "last_error": "", "last_sample": 0.0})
+
+    def tearDown(self):
+        for k in ("STATS_DIR", "STATS_FILE", "STATS_MAX_BYTES", "STATS_MAX_RETURN", "BACKUP_BUCKET"):
+            setattr(panel, k, self.saved[k])
+        panel._chown_steam = self.saved["_chown_steam"]
+        panel.subprocess.run = self.saved["run"]
+
+    def test_append_then_read_roundtrip(self):
+        panel.stats_append({"t": 100, "cpu": 12.5})
+        panel.stats_append({"t": 200, "cpu": 30.0})
+        r = panel.stats_read()
+        self.assertTrue(r["ok"])
+        self.assertEqual([x["t"] for x in r["samples"]], [100, 200])
+
+    def test_since_filters_older_samples(self):
+        for t in (10, 20, 30):
+            panel.stats_append({"t": t})
+        self.assertEqual([x["t"] for x in panel.stats_read(since=20)["samples"]], [30])
+
+    def test_torn_line_from_a_crash_is_skipped_not_fatal(self):
+        panel.stats_append({"t": 1})
+        with open(panel.STATS_FILE, "a", encoding="utf-8", newline="") as f:
+            f.write('{"t": 2, "cpu":')  # interrupted mid-write
+        r = panel.stats_read()
+        self.assertTrue(r["ok"])
+        self.assertEqual([x["t"] for x in r["samples"]], [1])
+
+    def test_rotation_keeps_one_generation_in_chronological_order(self):
+        # Disk use is bounded to ~2x the cap, so the OLDEST samples are dropped
+        # locally on purpose. They are archived to the bucket first (see
+        # _stats_archive) so the durable copy keeps them.
+        panel.BACKUP_BUCKET = ""  # skip the archive upload in this test
+        panel.STATS_MAX_BYTES = 80
+        for t in range(1, 12):
+            panel.stats_append({"t": t, "pad": "xxxxxxxxxx"})
+        self.assertTrue(os.path.exists(panel.STATS_FILE + ".1"), "no rotated file")
+        ts = [x["t"] for x in panel.stats_read()["samples"]]
+        # rotated file is read first, so order stays chronological
+        self.assertEqual(ts, sorted(ts))
+        self.assertIn(11, ts)  # newest survives
+        self.assertLess(len(ts), 11)  # and older generations were shed
+
+    def test_rotation_archives_the_outgoing_generation(self):
+        panel.BACKUP_BUCKET = "bkt"
+        panel.STATS_MAX_BYTES = 60
+        uploaded = []
+        panel.subprocess.run = lambda a, **k: uploaded.append(a[-1]) or type("R", (), {"returncode": 0})()
+        for t in range(1, 8):
+            panel.stats_append({"t": t, "pad": "zzzzzzzzzz"})
+        self.assertTrue(uploaded, "rotation did not archive to the bucket")
+        self.assertTrue(any("/stats/archive/history-" in u for u in uploaded), uploaded)
+
+    def test_live_file_never_exceeds_the_cap(self):
+        panel.STATS_MAX_BYTES = 100
+        for t in range(1, 30):
+            panel.stats_append({"t": t, "pad": "y" * 20})
+        # rotation happens before the append, so at most cap + one line
+        self.assertLess(os.path.getsize(panel.STATS_FILE), 100 + 200)
+
+    def test_read_caps_and_flags_truncation(self):
+        panel.STATS_MAX_RETURN = 3
+        for t in range(1, 10):
+            panel.stats_append({"t": t})
+        r = panel.stats_read()
+        self.assertEqual(r["count"], 3)
+        self.assertTrue(r["truncated"])
+        self.assertEqual([x["t"] for x in r["samples"]], [7, 8, 9])  # newest kept
+
+    def test_sync_without_a_bucket_is_a_validation_error(self):
+        panel.BACKUP_BUCKET = ""
+        panel.stats_append({"t": 1})
+        r = panel.stats_sync(force=True)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "validation")
+
+    def test_sync_is_rate_limited_unless_forced(self):
+        panel.BACKUP_BUCKET = "bkt"
+        panel.stats_append({"t": 1})
+        calls = []
+        panel.subprocess.run = lambda *a, **k: calls.append(a) or type("R", (), {"returncode": 0})()
+        self.assertTrue(panel.stats_sync(force=True)["synced"])
+        self.assertFalse(panel.stats_sync(force=False)["synced"])  # too soon
+        self.assertEqual(len(calls), 1)
+
+    def test_failed_upload_keeps_local_history(self):
+        panel.BACKUP_BUCKET = "bkt"
+        panel.stats_append({"t": 42})
+
+        def boom(*_a, **_k):
+            raise panel.subprocess.CalledProcessError(1, "gsutil", stderr=b"nope")
+
+        panel.subprocess.run = boom
+        r = panel.stats_sync(force=True)
+        self.assertFalse(r["ok"])
+        # the whole point: the samples are still on disk for the next attempt
+        self.assertEqual([x["t"] for x in panel.stats_read()["samples"]], [42])
+
+    def test_no_local_history_is_not_an_error(self):
+        panel.BACKUP_BUCKET = "bkt"
+        r = panel.stats_sync(force=True)
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["synced"])
+
 if __name__ == "__main__":
     unittest.main()

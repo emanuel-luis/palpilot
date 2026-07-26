@@ -40,6 +40,7 @@ CLI:
   python panel.py serve        run the web server (default)
 """
 
+import atexit
 import base64
 import hashlib
 import hmac
@@ -49,12 +50,14 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import socket
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -2116,6 +2119,205 @@ def host_metrics() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Performance history
+#
+# Sampled locally, synced to GCS periodically, flushed on shutdown.
+#
+# Local file lives on the PERSISTENT DATA DISK, not the boot disk: the VM gets
+# replaced (boot disk is auto_delete) and anything written there would vanish,
+# which is exactly the history we're trying to keep.
+#
+# Append-only JSON Lines, one sample per line, rotated by size. JSONL because a
+# crash mid-write costs one truncated line instead of an unparseable file, and
+# because appending needs no read-modify-write of the whole history.
+#
+# The bucket copy is a periodic mirror, not a live stream: uploading every sample
+# would be one GCS write per poll forever, for data nobody reads at that
+# resolution.
+# ---------------------------------------------------------------------------
+
+STATS_DIR = os.environ.get("STATS_DIR", f"{STEAM_DIR}/Pal/Saved/palworld-stats")
+STATS_FILE = os.path.join(STATS_DIR, "history.jsonl")
+STATS_SAMPLE_SECONDS = int(os.environ.get("STATS_SAMPLE_SECONDS", "60"))
+STATS_SYNC_SECONDS = int(os.environ.get("STATS_SYNC_SECONDS", "900"))  # 15 min
+STATS_MAX_BYTES = int(os.environ.get("STATS_MAX_BYTES", str(8 * 1024 * 1024)))
+STATS_MAX_RETURN = int(os.environ.get("STATS_MAX_RETURN", "5000"))
+
+_stats_state = {"last_sync": 0.0, "samples": 0, "last_error": "", "last_sample": 0.0}
+_stats_lock = threading.Lock()
+
+
+def _stats_remote_uri() -> str:
+    if not BACKUP_BUCKET:
+        return ""
+    return f"gs://{BACKUP_BUCKET}/stats/history.jsonl"
+
+
+def stats_sample() -> dict:
+    """One point: host metrics plus whatever the game will tell us."""
+    host = host_metrics()
+    players = fps = frametime = uptime = None
+    code, payload = rest_call("GET", "metrics")
+    if code == 200 and isinstance(payload, dict):
+        players = payload.get("currentplayernum")
+        fps = payload.get("serverfps")
+        frametime = payload.get("serverframetime")
+        uptime = payload.get("uptime")
+    return {
+        "t": int(time.time()),
+        "cpu": (host.get("cpu") or {}).get("percent"),
+        "mem": (host.get("memory") or {}).get("percent"),
+        "disk": (host.get("disk") or {}).get("percent"),
+        "rx": (host.get("network") or {}).get("rx_bytes_per_sec"),
+        "tx": (host.get("network") or {}).get("tx_bytes_per_sec"),
+        "players": players,
+        "fps": fps,
+        "frametime": frametime,
+        "uptime": uptime,
+        "up": bool(host.get("service_active")),
+    }
+
+
+def stats_append(sample: dict) -> None:
+    with _stats_lock:
+        try:
+            os.makedirs(STATS_DIR, exist_ok=True)
+            # Rotate BEFORE appending so the live file never exceeds the cap.
+            if os.path.exists(STATS_FILE) and os.path.getsize(STATS_FILE) > STATS_MAX_BYTES:
+                # Only ONE local generation is kept, so the outgoing one must be
+                # archived to the bucket now or it is lost at the next rotation.
+                _stats_archive(STATS_FILE)
+                os.replace(STATS_FILE, STATS_FILE + ".1")
+            with open(STATS_FILE, "a", encoding="utf-8", newline="") as f:
+                f.write(json.dumps(sample, separators=(",", ":")) + "\n")
+            _chown_steam(STATS_DIR)
+            _chown_steam(STATS_FILE)
+            _stats_state["samples"] += 1
+            _stats_state["last_sample"] = time.time()
+        except OSError as e:  # noqa: BLE001
+            _stats_state["last_error"] = f"append failed: {e}"
+
+
+def _stats_archive(path: str) -> None:
+    """Best-effort upload of a rotated generation under a timestamped name.
+    Never raises: losing an archive copy must not stop sampling."""
+    uri = _stats_remote_uri()
+    if not uri or not os.path.exists(path):
+        return
+    remote = uri.replace("history.jsonl", f"archive/history-{_timestamp()}.jsonl")
+    try:
+        subprocess.run(["gsutil", "-q", "cp", path, remote], check=True,
+                       capture_output=True, timeout=120)
+    except Exception as e:  # noqa: BLE001
+        _stats_state["last_error"] = f"archive failed: {e}"
+
+
+def stats_sync(force: bool = False) -> dict:
+    """Mirror the local file to GCS. Returns an envelope-shaped dict."""
+    uri = _stats_remote_uri()
+    if not uri:
+        return {"ok": False, "reason": "validation", "error": "BACKUP_BUCKET is not configured"}
+    if not os.path.exists(STATS_FILE):
+        return {"ok": True, "synced": False, "reason_skipped": "no local history yet"}
+    now = time.time()
+    if not force and (now - _stats_state["last_sync"]) < STATS_SYNC_SECONDS:
+        return {"ok": True, "synced": False, "reason_skipped": "synced recently"}
+    try:
+        subprocess.run(
+            ["gsutil", "-q", "cp", STATS_FILE, uri],
+            check=True, capture_output=True, timeout=120,
+        )
+        _stats_state["last_sync"] = now
+        _stats_state["last_error"] = ""
+        return {"ok": True, "synced": True, "uri": uri, "bytes": os.path.getsize(STATS_FILE)}
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        detail = getattr(e, "stderr", b"") or b""
+        msg = detail.decode(errors="replace")[:300] if isinstance(detail, bytes) else str(e)
+        _stats_state["last_error"] = f"sync failed: {msg or e}"
+        # A failed upload must not lose the local history — it stays on disk and
+        # the next sync retries the whole file.
+        return {"ok": False, "reason": "conflict", "error": _stats_state["last_error"]}
+
+
+def stats_read(since: int = 0, limit: int = 0) -> dict:
+    """Samples newer than `since` (unix seconds), oldest first."""
+    cap = min(limit or STATS_MAX_RETURN, STATS_MAX_RETURN)
+    out = []
+    for path in (STATS_FILE + ".1", STATS_FILE):  # rotated first: chronological
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue  # a torn last line from a crash: skip it
+                    if since and rec.get("t", 0) <= since:
+                        continue
+                    out.append(rec)
+        except OSError as e:  # noqa: BLE001
+            return {"ok": False, "reason": "not_found", "error": f"could not read history: {e}"}
+    truncated = len(out) > cap
+    if truncated:
+        out = out[-cap:]
+    return {
+        "ok": True,
+        "samples": out,
+        "count": len(out),
+        "truncated": truncated,
+        "sample_seconds": STATS_SAMPLE_SECONDS,
+        "remote": _stats_remote_uri(),
+        "last_sync": int(_stats_state["last_sync"]) or None,
+        "last_error": _stats_state["last_error"] or None,
+    }
+
+
+def stats_flush() -> dict:
+    """Take a final sample and force the upload. Called on shutdown."""
+    try:
+        stats_append(stats_sample())
+    except Exception as e:  # noqa: BLE001
+        _stats_state["last_error"] = f"final sample failed: {e}"
+    return stats_sync(force=True)
+
+
+def _stats_worker() -> None:
+    while True:
+        try:
+            stats_append(stats_sample())
+            stats_sync(force=False)  # no-ops until the interval elapses
+        except Exception as e:  # noqa: BLE001
+            _stats_state["last_error"] = f"worker: {e}"
+        time.sleep(STATS_SAMPLE_SECONDS)
+
+
+def start_stats_collector() -> None:
+    """Daemon sampler + flush on shutdown.
+
+    systemd sends SIGTERM on stop/reboot/poweroff, so the handler covers the
+    watchdog powering the VM off, an operator restart, and a coordinator-issued
+    stop alike. atexit is the belt-and-braces path for a clean interpreter exit.
+    """
+    threading.Thread(target=_stats_worker, name="stats", daemon=True).start()
+
+    def _on_term(_signum, _frame):
+        stats_flush()
+        # Re-raise the default behaviour so systemd still sees us exit.
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+    except ValueError:
+        pass  # not on the main thread (e.g. under some test runners)
+    atexit.register(lambda: stats_flush())
+
+
 def _log_files() -> list:
     try:
         names = [n for n in os.listdir(LOGS_DIR) if n.lower().endswith(".log")]
@@ -2564,6 +2766,19 @@ def build_app():
     def metrics_host(_: str = Depends(require("view"))):
         return _envelope(host_metrics())
 
+    @app.get("/api/metrics/history")
+    def metrics_history(
+        since: int = 0,
+        limit: int = 0,
+        _: str = Depends(require("view")),
+    ):
+        return _envelope(stats_read(since, limit))
+
+    @app.post("/api/metrics/flush")
+    def metrics_flush(_: str = Depends(require("commands"))):
+        # Manual equivalent of the shutdown flush, for "save stats now".
+        return _envelope(stats_flush())
+
     @app.get("/api/logs")
     def logs(
         name: str = "",
@@ -2846,6 +3061,9 @@ def main():
     if cmd == "bootstrap":
         bootstrap()
         return
+    # Sampler + flush-on-SIGTERM. Only in serve mode; bootstrap just exits.
+    start_stats_collector()
+
     import uvicorn
 
     uvicorn.run(build_app(), host="0.0.0.0", port=PANEL_PORT)
