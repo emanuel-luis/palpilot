@@ -36,16 +36,20 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Split the heavy, rarely-changing libraries out of the app chunk so a
-        // console deploy doesn't invalidate ~400kB of vendor code in every cache.
+        // console deploy doesn't invalidate ~250kB of vendor code in every cache.
+        //
+        // Deliberately NO catch-all "vendor" bucket: a catch-all swept up modules
+        // that vendor-react depends on, producing `Circular chunk: vendor ->
+        // vendor-react -> vendor`. Chunk cycles can break module init order at
+        // runtime, so anything not named here is left to Rollup's own grouping.
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          if (id.includes("recharts") || id.includes("d3-")) return "vendor-charts";
+          if (id.includes("recharts") || id.includes("/d3-")) return "vendor-charts";
           if (id.includes("framer-motion")) return "vendor-motion";
           if (id.includes("@radix-ui")) return "vendor-radix";
-          if (id.includes("react-hook-form") || id.includes("zod") || id.includes("@hookform")) return "vendor-forms";
           if (id.includes("@tanstack")) return "vendor-query";
-          if (id.includes("react-dom") || id.includes("/react/") || id.includes("scheduler")) return "vendor-react";
-          return "vendor";
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return "vendor-react";
+          return undefined;
         },
       },
     },
