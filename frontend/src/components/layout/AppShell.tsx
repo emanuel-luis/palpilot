@@ -44,9 +44,9 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "World",
     items: [
       { id: "saves", route: "/saves", label: "Saves", icon: Save, perms: ["view"] },
-      { id: "backups", route: "/backups", label: "Backups", icon: Archive, perms: ["view"] },
       { id: "settings", route: "/settings", label: "Server settings", icon: Settings2, perms: ["view"] },
       { id: "mods", route: "/mods", label: "Mods", icon: HardDriveDownload, perms: ["view"] },
+      { id: "watchdog", route: "/watchdog", label: "Auto shutdown", icon: Archive, perms: ["view"] },
     ],
   },
   {
