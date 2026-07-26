@@ -51,15 +51,23 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
 - **Agent (`panel/*`)** → push to the panel GCS bucket. The VM fetches it **on next boot** (startup.sh) or via the
   self-update endpoint. Terraform intentionally does NOT manage panel code (`ignore_changes = [source]`), so
   `terraform apply` never redeploys it.
-- **Infra (`*.tf`, `startup.sh`)** → `terraform apply`. Editing `startup.sh` or instance `metadata` is an
-  **in-place update, not a VM recreate** (no `lifecycle`/force-new on the instance; `allow_stopping_for_update`
-  exists only for resizing). It takes effect on the VM's **next boot**, so plan a reboot — not a rebuild. Changes
-  that genuinely recreate the VM are things like boot image, machine shape or network changes.
+- **Infra (`*.tf`, `startup.sh`)** → `terraform apply`. **Editing `startup.sh` DOES force a VM recreate**:
+  `metadata_startup_script` is ForceNew on `google_compute_instance`, confirmed by
+  `terraform show` reporting `metadata_startup_script … # forces replacement`. Plan it as a maintenance window
+  (it disconnects players). The persistent data disk survives, the boot disk does not.
+  Ordinary `metadata` entries (e.g. `coordinator-url`) ARE in-place and take effect on the next boot — those two
+  cases are different, which is easy to conflate.
+- ⚠️ **`startup.sh` is currently DRIFTED from the state**: it changed in `2819148` (2026-07-17) and no apply has
+  run since, so an untargeted `terraform apply` will replace the VM even if you changed nothing. Until that is
+  reconciled in a maintenance window, deploy infra with `-target`, e.g.
+  `terraform apply -target=google_cloud_run_v2_service.coordinator`. Check `terraform plan` for
+  `must be replaced` on `google_compute_instance.palworld` before every apply.
 
 ## Hard constraints — do not break
 
 - **Live server with real players.** Anything that restarts `palworld.service`, reboots or recreates the VM, or
-  changes the network is a maintenance-window action, not an any-time deploy.
+  changes the network is a maintenance-window action, not an any-time deploy. Always read `terraform plan` for
+  `must be replaced` before applying.
 - **Persistent data disk (`/home/steam/Steam`) must survive** any VM recreate — it holds worlds, mods, slot configs.
 - **Secrets never in git:** `terraform.tfvars`, `terraform.tfstate*` are gitignored — keep them that way, and out of
   cloud-synced folders. `frontend/node_modules` and build caches stay out too.
