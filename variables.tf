@@ -120,6 +120,49 @@ variable "notification_channel_email" {
 }
 
 #
+# --- Discord bot (see docs/DISCORD.md) ---
+# All optional: an empty discord_public_key leaves the interactions endpoint
+# disabled (404) and changes nothing about the rest of the deployment.
+#
+
+variable "discord_public_key" {
+  description = <<-EOT
+    Discord application PUBLIC KEY (General Information page). The coordinator
+    verifies every interaction's Ed25519 signature against it. Empty (default)
+    disables /api/discord/interactions entirely. This is a public value -- the
+    bot token is never given to the coordinator.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "discord_guild_id" {
+  description = "Discord server (guild) ID allowed to use the bot. Empty = accept any guild the app is in."
+  type        = string
+  default     = ""
+}
+
+variable "discord_admin_role_ids" {
+  description = <<-EOT
+    Discord role IDs granted every PalPilot permission: /paladmin (announce,
+    kick, ban, shutdown, poweroff) and console-user management. Comma-separated.
+    Empty = nobody gets the elevated commands.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "discord_user_role_ids" {
+  description = <<-EOT
+    Discord role IDs allowed the plain-member commands (/palworld status,
+    address, players, start -> "view" + "power"). Comma-separated. Empty means
+    any member of the guild may run them.
+  EOT
+  type        = string
+  default     = ""
+}
+
+#
 # --- Dual-mode server runtime (see docs/FRONTEND_V2_PLAN.md "Runtime dual-mode") ---
 #
 

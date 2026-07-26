@@ -22,3 +22,9 @@ output "panel_bucket" {
 output "coordinator_url" {
   value = google_cloudfunctions2_function.coordinator.url
 }
+
+
+# Cole em Discord Developer Portal -> seu app -> "Interactions Endpoint URL"
+output "discord_interactions_url" {
+  value = "${google_cloudfunctions2_function.coordinator.url}/api/discord/interactions"
+}

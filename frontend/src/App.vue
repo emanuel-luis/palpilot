@@ -99,10 +99,17 @@ watch(
 );
 
 // ---------------------------------------------------------------------------
-// header: VM pill + account menu
+// header: VM pill + game-server pill + account menu
+//
+// Two separate pills on purpose: the VM (compute, what you pay for) and the
+// Palworld process (what players connect to) are genuinely different states —
+// the VM reports RUNNING a couple of minutes before the game accepts anyone.
 // ---------------------------------------------------------------------------
 
 const vmPillTone = computed(() => (server.isRunning ? "ok" : server.isTransitioning ? "warn" : "danger"));
+
+const GAME_TONES = { online: "ok", starting: "warn", offline: "danger" };
+const gamePillTone = computed(() => GAME_TONES[server.gameState] || "danger");
 
 const accountMenuOpen = ref(false);
 
@@ -163,9 +170,15 @@ async function signOutAll() {
 
     <div class="main-col">
       <header class="topbar">
-        <span class="pill" :class="vmPillTone">
+        <span class="pill" :class="vmPillTone" :title="t('header.vmStatusHint')">
           <span class="dot"></span>
-          {{ t("header.vmStatus", { status: server.vm.status || t("common.unknown") }) }}
+          <span class="pill-label eyebrow">{{ t("header.vmLabel") }}</span>
+          {{ server.vm.status || t("common.unknown") }}
+        </span>
+        <span class="pill" :class="gamePillTone" :title="t('header.serverStatusHint')">
+          <span class="dot"></span>
+          <span class="pill-label eyebrow">{{ t("header.serverLabel") }}</span>
+          {{ t(`header.gameState.${server.gameState}`) }}
         </span>
         <span class="spacer"></span>
         <ThemeToggle />
@@ -343,6 +356,11 @@ async function signOutAll() {
 .pill.danger .dot {
   background: var(--danger);
 }
+/* "VM" / "Server" prefix: quiet enough that the state itself reads first. */
+.pill .pill-label {
+  color: var(--muted);
+  margin-right: -2px;
+}
 
 .icon-btn {
   background: transparent;
@@ -444,6 +462,12 @@ async function signOutAll() {
   }
   .topbar {
     padding-left: 58px;
+    gap: 8px;
+  }
+  /* two pills + theme toggle + avatar on a phone: let the pills wrap instead
+     of squeezing the account controls off the edge. */
+  .topbar .pill {
+    padding: 3px 8px;
   }
 }
 </style>

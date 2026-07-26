@@ -19,6 +19,13 @@ internal_token = "CHANGE-ME-random-hex"       # shared secret: watchdog + coordi
 # idle_poll_seconds  = 60      # how often the watchdog checks for players
 # idle_grace_seconds = 1800    # power off after this long empty
 
+# --- Discord bot (all optional; see docs/DISCORD.md) ---
+# Empty discord_public_key leaves the interactions endpoint disabled (404).
+# discord_public_key     = ""            # Discord app "Public key" (not the bot token)
+# discord_guild_id       = ""            # your Discord server ID; empty = any guild the app joined
+# discord_admin_role_ids = "111,222"     # roles allowed /paladmin + console-user management
+# discord_user_role_ids  = ""            # roles allowed /palworld; empty = every guild member
+
 # --- security / ops (safe defaults; opt in when ready) ---
 # panel_allowed_cidrs        = ["0.0.0.0/0"]   # RISK: restrict once coordinator egress path is decided (plan §9)
 # ssh_admin_cidrs            = []               # extra CIDRs for the restricted SSH rule (IAP range is always allowed)
