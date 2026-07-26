@@ -8,7 +8,6 @@ import { useOverview } from "@/hooks/queries";
 import { deriveGameState } from "@/components/StatusPills";
 import { PlayersTable } from "@/components/PlayersTable";
 import { SavesSection } from "@/components/SavesSection";
-import { SettingsSection } from "@/components/SettingsSection";
 import { ModsSection } from "@/components/ModsSection";
 import { CommandsSection } from "@/components/CommandsSection";
 import { WatchdogSection } from "@/components/WatchdogSection";
@@ -62,19 +61,6 @@ export function SavesPage() {
         description="Each save keeps its own settings and mods, and they travel with it when you clone or switch. Backups live under the save they belong to."
       />
       {online ? <SavesSection /> : <OfflineNotice action="manage saves" />}
-    </>
-  );
-}
-
-export function SettingsPage() {
-  const { online } = useServerState();
-  return (
-    <>
-      <PageHeader
-        title="Server settings"
-        description="PalWorldSettings.ini for the active save. Edit as many fields as you like, then apply them together."
-      />
-      {online ? <SettingsSection /> : <OfflineNotice action="edit settings" />}
     </>
   );
 }

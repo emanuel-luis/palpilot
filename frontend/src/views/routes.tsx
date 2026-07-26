@@ -19,7 +19,7 @@ export type RouteDef = {
 const Players = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.PlayersPage })));
 const Commands = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.CommandsPage })));
 const Saves = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.SavesPage })));
-const Settings = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.SettingsPage })));
+const Settings = lazy(() => import("@/views/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const Mods = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.ModsPage })));
 const Watchdog = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.WatchdogPage })));
 const Logs = lazy(() => import("@/views/pages/LogsPage").then((m) => ({ default: m.LogsPage })));
