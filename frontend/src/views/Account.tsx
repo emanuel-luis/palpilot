@@ -53,7 +53,7 @@ export function AccountView() {
               <input className="input" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} required /></div>
             <div className="field"><label className="field-label">{t("account.new")}</label>
               <input className="input" type="password" autoComplete="new-password" value={nw} onChange={(e) => setNw(e.target.value)} required /></div>
-            <div class-name="field"><label className="field-label">{t("account.confirm")}</label>
+            <div className="field"><label className="field-label">{t("account.confirm")}</label>
               <input className="input" type="password" autoComplete="new-password" value={cf} onChange={(e) => setCf(e.target.value)} required /></div>
             <div><button className="btn btn-primary" type="submit" disabled={busy}>{t("account.submit")}</button></div>
           </form>
