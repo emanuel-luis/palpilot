@@ -21,7 +21,7 @@
     --surface-2: 218 34% 16%;  /* raised: popovers, hovered rows */
     --line: 218 32% 22%;       /* soft divider, never a hard border */
     --fg: 213 45% 93%;
-    --muted: 215 24% 66%;
+    --fg-muted: 215 24% 66%;
     --faint: 215 18% 48%;
 
     --signal: 217 91% 60%;     /* #3B82F6  blue — actions */
@@ -40,7 +40,7 @@
     --surface-2: 214 30% 93%;
     --line: 214 22% 85%;
     --fg: 218 40% 14%;
-    --muted: 218 14% 40%;
+    --fg-muted: 218 14% 40%;
     --faint: 218 12% 55%;
 
     --signal: 221 83% 48%;
@@ -51,6 +51,55 @@
     --danger: 0 72% 47%;
     --ring: 221 83% 48%;
     --shadow: 218 40% 60%;
+  }
+
+  /* -------------------------------------------------------------------------
+     Re-point the OLD stylesheet's palette at the new tokens.
+
+     styles/legacy.css still ships its warm paper/moss/clay palette, and the
+     screens not yet migrated (Saves, Mods, Commands) read those variables — so
+     without this they render in the previous interface's colours next to the new
+     ones. Overriding the variables rather than the rules means every legacy
+     component adopts the dark navy system immediately, and both themes keep
+     working because these resolve through the new tokens, which already flip.
+
+     This block loads after legacy.css and matches its specificity, so it wins,
+     including over legacy's own [data-theme="dark"] and prefers-color-scheme
+     blocks. Delete it together with legacy.css once nothing reads these.
+  ------------------------------------------------------------------------- */
+  :root,
+  :root[data-theme="light"],
+  :root[data-theme="dark"] {
+    --paper: hsl(var(--bg));
+    --paper-2: hsl(var(--surface-2));
+    --panel: hsl(var(--surface));
+    --ink: hsl(var(--fg));
+    --ink-2: hsl(var(--fg-muted));
+    --muted: hsl(var(--fg-muted));
+    --rule: hsl(var(--line));
+    --rule-2: hsl(var(--line));
+
+    /* The old accent trio maps onto the new semantic roles: moss was the
+       "healthy/go" accent, so it becomes the action blue; clay was danger;
+       brass was warning. */
+    --moss: hsl(var(--signal));
+    --moss-2: hsl(var(--signal));
+    --clay: hsl(var(--danger));
+    --clay-2: hsl(var(--danger));
+    --brass: hsl(var(--warn));
+    --brass-2: hsl(var(--warn));
+    --slate: hsl(var(--faint));
+
+    --shadow-panel: 0 1px 2px hsl(var(--shadow) / 0.28), 0 2px 8px hsl(var(--shadow) / 0.22);
+    --shadow-inset: inset 0 0 0 1px hsl(var(--line));
+    --focus: 0 0 0 2px hsl(var(--bg)), 0 0 0 4px hsl(var(--ring));
+  }
+
+  /* Legacy hardcodes a near-black button label for its dark theme, which is
+     unreadable on the new blue. */
+  [data-theme="dark"] .btn-primary,
+  [data-theme="dark"] .btn-danger:hover:not(:disabled) {
+    color: hsl(var(--signal-fg));
   }
 
   html {
