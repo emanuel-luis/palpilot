@@ -38,6 +38,15 @@ gcloud iam service-accounts add-iam-policy-binding \
   "palworld-coordinator@$PROJECT.iam.gserviceaccount.com" \
   --project="$PROJECT" --member="serviceAccount:$DEPLOYER" --role=roles/iam.serviceAccountUser
 
+# act as the DEFAULT COMPUTE SA too — a gen2 deploy builds via Cloud Build, which
+# runs as this account. Without it the deploy dies with
+#   "Caller is missing permission 'iam.serviceaccounts.actAs' on service account
+#    <PNUM>-compute@developer.gserviceaccount.com"
+# even though auth and every project-level role above succeeded.
+gcloud iam service-accounts add-iam-policy-binding \
+  "$PNUM-compute@developer.gserviceaccount.com" \
+  --project="$PROJECT" --member="serviceAccount:$DEPLOYER" --role=roles/iam.serviceAccountUser
+
 # 3) Workload Identity Federation pool + provider, locked to this repo
 gcloud iam workload-identity-pools create github \
   --project="$PROJECT" --location=global --display-name="GitHub Actions"
