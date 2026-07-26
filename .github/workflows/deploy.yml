@@ -108,10 +108,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate panel (py_compile + INI parser tests)
+      # tests/ has no __init__.py, so `unittest discover` can't load it — list the
+      # modules explicitly and add new ones here.
+      - name: Validate panel (py_compile + parser/metrics/log tests)
         run: |
           python3 -m py_compile panel/panel.py panel/idle_watchdog.py
-          (cd panel && python3 -m unittest -q tests.test_ini)
+          (cd panel && python3 -m unittest -q tests.test_ini tests.test_metrics_logs)
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)

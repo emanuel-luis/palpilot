@@ -1872,6 +1872,228 @@ def delete_mod(name: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Host metrics + game logs (read-only, unprivileged)
+#
+# Both deliberately avoid new dependencies AND new privileges:
+#   * /proc is world-readable, so CPU/memory/network need no psutil -- the venv
+#     only has fastapi+uvicorn, and adding a package means editing startup.sh,
+#     which recreates the VM.
+#   * the game's own log tree is owned by STEAM_USER, so tailing it needs no
+#     sudo -- the sudoers drop-in allows exactly nine systemctl commands and
+#     journalctl is not among them.
+# Net effect: this ships by pushing to the panel bucket, no VM recreate.
+# ---------------------------------------------------------------------------
+
+LOGS_DIR = os.environ.get("LOGS_DIR", f"{STEAM_DIR}/Pal/Saved/Logs")
+LOG_MAX_CHUNK_BYTES = int(os.environ.get("LOG_MAX_CHUNK_BYTES", str(256 * 1024)))
+LOG_MAX_LINES = int(os.environ.get("LOG_MAX_LINES", "2000"))
+
+# Previous /proc/net/dev sample, so successive polls can report a rate.
+_net_sample = {"ts": 0.0, "rx": 0, "tx": 0}
+
+
+def _read_proc(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _cpu_snapshot():
+    """(busy+idle jiffies, idle jiffies, core count) from one /proc/stat read."""
+    total = idle = None
+    cores = 0
+    for line in _read_proc("/proc/stat").splitlines():
+        if line.startswith("cpu "):
+            parts = [int(x) for x in line.split()[1:] if x.isdigit()]
+            if len(parts) >= 5:
+                # idle + iowait: both are "not doing work"
+                idle = parts[3] + parts[4]
+                total = sum(parts)
+        elif re.match(r"cpu\d+ ", line):
+            cores += 1
+    if total is None or idle is None:
+        return None
+    return total, idle, max(1, cores)
+
+
+def _cpu_percent(sample_seconds: float = 0.12):
+    """Utilisation across a short sample window. Runs in FastAPI's threadpool
+    (the handler is a plain `def`), so the brief sleep doesn't block the loop."""
+    a = _cpu_snapshot()
+    if not a:
+        return None, 0
+    time.sleep(sample_seconds)
+    b = _cpu_snapshot()
+    if not b:
+        return None, a[2]
+    d_total, d_idle = b[0] - a[0], b[1] - a[1]
+    if d_total <= 0:
+        return None, b[2]
+    return round(100.0 * (d_total - d_idle) / d_total, 1), b[2]
+
+
+def _meminfo() -> dict:
+    vals = {}
+    for line in _read_proc("/proc/meminfo").splitlines():
+        key, _, rest = line.partition(":")
+        field = rest.strip().split()
+        if field and field[0].isdigit():
+            vals[key] = int(field[0]) * 1024  # /proc reports kB
+    total = vals.get("MemTotal", 0)
+    # MemAvailable is the honest "could be handed to a new process" figure;
+    # MemFree alone reads as near-zero on a healthy box because of page cache.
+    available = vals.get("MemAvailable", vals.get("MemFree", 0))
+    used = max(0, total - available)
+    return {
+        "total": total,
+        "available": available,
+        "used": used,
+        "percent": round(100.0 * used / total, 1) if total else None,
+    }
+
+
+def _netio() -> dict:
+    rx = tx = 0
+    for line in _read_proc("/proc/net/dev").splitlines():
+        name, sep, rest = line.partition(":")
+        if not sep:
+            continue
+        name = name.strip()
+        if name == "lo" or name.startswith(("docker", "veth", "br-")):
+            continue
+        f = rest.split()
+        if len(f) >= 9:
+            rx += int(f[0])
+            tx += int(f[8])
+    now = time.time()
+    rate_rx = rate_tx = None
+    if _net_sample["ts"] and now > _net_sample["ts"]:
+        span = now - _net_sample["ts"]
+        # Counters reset on reboot; a decrease means "no useful rate", not negative traffic.
+        if rx >= _net_sample["rx"] and tx >= _net_sample["tx"]:
+            rate_rx = int((rx - _net_sample["rx"]) / span)
+            rate_tx = int((tx - _net_sample["tx"]) / span)
+    _net_sample.update({"ts": now, "rx": rx, "tx": tx})
+    return {
+        "rx_bytes": rx,
+        "tx_bytes": tx,
+        "rx_bytes_per_sec": rate_rx,
+        "tx_bytes_per_sec": rate_tx,
+    }
+
+
+def host_metrics() -> dict:
+    """CPU/memory/disk/network for the VM. `percent` fields are None when a
+    reading isn't available yet rather than a misleading zero."""
+    percent, cores = _cpu_percent()
+    load = _read_proc("/proc/loadavg").split()
+    uptime = _read_proc("/proc/uptime").split()
+    try:
+        st = os.statvfs(STEAM_DIR)
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        disk = {
+            "path": STEAM_DIR,
+            "total": total,
+            "free": free,
+            "used": total - free,
+            "percent": round(100.0 * (total - free) / total, 1) if total else None,
+        }
+    except OSError:
+        disk = {"path": STEAM_DIR, "total": 0, "free": 0, "used": 0, "percent": None}
+
+    def _f(idx):
+        try:
+            return float(load[idx])
+        except (IndexError, ValueError):
+            return None
+
+    return {
+        "ok": True,
+        "cpu": {"percent": percent, "cores": cores, "load1": _f(0), "load5": _f(1), "load15": _f(2)},
+        "memory": _meminfo(),
+        "disk": disk,
+        "network": _netio(),
+        "host_uptime": int(float(uptime[0])) if uptime else None,
+        "service_active": _service_active(),
+    }
+
+
+def _log_files() -> list:
+    try:
+        names = [n for n in os.listdir(LOGS_DIR) if n.lower().endswith(".log")]
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        try:
+            stt = os.stat(os.path.join(LOGS_DIR, n))
+        except OSError:
+            continue
+        out.append({"name": n, "size": stt.st_size, "modified": int(stt.st_mtime)})
+    out.sort(key=lambda x: x["modified"], reverse=True)
+    return out
+
+
+def read_log(name: str = "", cursor: int = -1, max_bytes: int = 0) -> dict:
+    """Tail a log, or stream forward from `cursor` (a byte offset).
+
+    cursor < 0  -> return the tail of the file and the offset that follows it
+    cursor >= 0 -> return only what was appended since, for incremental polling
+
+    `rotated` tells the client its cursor is stale because the file shrank
+    (restart/rotation), so it should clear and re-tail rather than show a gap.
+    """
+    files = _log_files()
+    if not files:
+        return {
+            "ok": True, "file": "", "files": [], "cursor": 0, "size": 0,
+            "lines": [], "rotated": False, "truncated": False,
+        }
+    if name:
+        safe = _safe_name(name)
+        chosen = next((f for f in files if f["name"] == safe), None)
+        if not chosen:
+            return {"ok": False, "reason": "not_found", "error": "log file not found"}
+    else:
+        chosen = files[0]  # newest by mtime
+
+    path = os.path.join(LOGS_DIR, chosen["name"])
+    cap = min(max_bytes if max_bytes > 0 else LOG_MAX_CHUNK_BYTES, LOG_MAX_CHUNK_BYTES)
+    try:
+        size = os.path.getsize(path)
+        rotated = cursor > size
+        if cursor < 0 or rotated:
+            start = max(0, size - cap)
+            tailing = True
+        else:
+            start = min(cursor, size)
+            tailing = False
+        if size - start > cap:
+            start = size - cap
+        with open(path, "rb") as f:
+            f.seek(start)
+            raw = f.read(max(0, size - start))
+    except OSError as e:  # noqa: BLE001
+        return {"ok": False, "reason": "not_found", "error": f"could not read log: {e}"}
+
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    # When we started mid-file the first line is a fragment; drop it rather than
+    # emitting a half line the UI would render as a broken entry.
+    if tailing and start > 0 and lines:
+        lines = lines[1:]
+    truncated = len(lines) > LOG_MAX_LINES
+    if truncated:
+        lines = lines[-LOG_MAX_LINES:]
+    return {
+        "ok": True, "file": chosen["name"], "files": files, "cursor": size,
+        "size": size, "lines": lines, "rotated": rotated, "truncated": truncated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Domain error envelope: { ok, error, ...data } with real status codes
 # ---------------------------------------------------------------------------
 
@@ -2207,6 +2429,21 @@ def build_app():
             raise HTTPException(404, "unknown endpoint")
         code, payload = rest_call("POST", endpoint, body or {})
         return JSONResponse(status_code=code, content=payload)
+
+    # ---- host metrics + game logs ----
+
+    @app.get("/api/metrics/host")
+    def metrics_host(_: str = Depends(require("view"))):
+        return _envelope(host_metrics())
+
+    @app.get("/api/logs")
+    def logs(
+        name: str = "",
+        cursor: int = -1,
+        max_bytes: int = 0,
+        _: str = Depends(require("view")),
+    ):
+        return _envelope(read_log(name, cursor, max_bytes))
 
     # ---- save slots ----
 

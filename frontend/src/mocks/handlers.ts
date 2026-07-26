@@ -116,7 +116,7 @@ export async function handle(ctx: Ctx): Promise<Response> {
   }
 
   // ── vm_offline gate for VM-required routes ──────────────────────────
-  const vmRequired = /^\/api\/(rest|config|saves|mods|restart)/.test(path);
+  const vmRequired = /^\/api\/(rest|config|saves|mods|restart|metrics|logs)/.test(path);
   if (vmRequired && fx.vm.status !== "RUNNING") {
     return json({ ok: false, error: "vm_offline", status: fx.vm.status }, 503);
   }
@@ -152,6 +152,78 @@ export async function handle(ctx: Ctx): Promise<Response> {
   }
   if (path === "/api/restart" && method === "POST") {
     return json({ restarted: true });
+  }
+
+  // ── host metrics + logs ─────────────────────────────────────────────
+  // Shapes mirror panel.py exactly, including `null` for a reading that isn't
+  // available yet — the UI must render "—" for those, not 0.
+  if (path === "/api/metrics/host" && method === "GET") {
+    const jitter = (base: number, spread: number) =>
+      Math.max(0, Math.min(100, Math.round((base + (Math.sin(Date.now() / 9000) * spread)) * 10) / 10));
+    const memTotal = 8 * 1024 ** 3;
+    const memPct = jitter(46, 9);
+    const diskTotal = 100 * 1024 ** 3;
+    const diskUsed = Math.round(diskTotal * 0.41);
+    fx.netCounters = fx.netCounters || { rx: 4_200_000, tx: 9_100_000 };
+    fx.netCounters.rx += Math.round(40_000 + Math.random() * 90_000);
+    fx.netCounters.tx += Math.round(80_000 + Math.random() * 160_000);
+    return json({
+      ok: true, error: null,
+      cpu: { percent: jitter(27, 14), cores: 4, load1: 0.82, load5: 0.61, load15: 0.44 },
+      memory: {
+        total: memTotal,
+        used: Math.round(memTotal * (memPct / 100)),
+        available: Math.round(memTotal * (1 - memPct / 100)),
+        percent: memPct,
+      },
+      disk: {
+        path: "/home/steam/Steam", total: diskTotal, used: diskUsed,
+        free: diskTotal - diskUsed, percent: 41,
+      },
+      network: {
+        rx_bytes: fx.netCounters.rx, tx_bytes: fx.netCounters.tx,
+        rx_bytes_per_sec: Math.round(12_000 + Math.random() * 40_000),
+        tx_bytes_per_sec: Math.round(28_000 + Math.random() * 70_000),
+      },
+      host_uptime: 8123,
+      service_active: !!fx.server,
+    });
+  }
+  if (path === "/api/logs" && method === "GET") {
+    const cursor = Number(query.get("cursor") ?? "-1");
+    fx.logLines = fx.logLines || [];
+    // Append a line or two per poll so the terminal visibly streams.
+    const SAMPLE = [
+      "[Pal] LogPal: Display: World save completed (12.4 MB)",
+      "[Pal] LogNet: Display: Join succeeded: PalMaster",
+      "[Pal] LogPal: Warning: Pal spawn budget exceeded in area 12, throttling",
+      "[Pal] LogTemp: Display: Autosave scheduled in 1800s",
+      "[Pal] LogNet: Display: UNetConnection::Close: [UNetConnection] RemoteAddr: 10.0.0.5",
+      "[Pal] LogPal: Error: Failed to load blueprint override; using default",
+    ];
+    const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
+    const add = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < add; i++) {
+      fx.logLines.push(`[${stamp()}]${SAMPLE[Math.floor(Math.random() * SAMPLE.length)]}`);
+    }
+    if (fx.logLines.length > 3000) fx.logLines = fx.logLines.slice(-3000);
+
+    const joined = fx.logLines.join("\n") + "\n";
+    const size = joined.length;
+    const rotated = cursor > size;
+    const start = cursor < 0 || rotated ? Math.max(0, size - 8 * 1024) : Math.min(cursor, size);
+    let chunk = joined.slice(start);
+    let lines = chunk.length ? chunk.split("\n").filter(Boolean) : [];
+    if ((cursor < 0 || rotated) && start > 0 && lines.length) lines = lines.slice(1);
+    return json({
+      ok: true, error: null,
+      file: "Pal.log",
+      files: [
+        { name: "Pal.log", size, modified: Math.floor(Date.now() / 1000) },
+        { name: "Pal-backup-2026.07.25.log", size: 481_233, modified: Math.floor(Date.now() / 1000) - 86400 },
+      ],
+      cursor: size, size, lines, rotated, truncated: false,
+    });
   }
 
   // ── settings ────────────────────────────────────────────────────────
