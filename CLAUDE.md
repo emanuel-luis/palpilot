@@ -73,6 +73,13 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   (`var.runtime_mode = "proton"`, a deliberate VM recreate) — otherwise UE4SS installs return 409.
 - **Cost model:** the VM auto-powers-off when empty; the fixed floor is the static IP + persistent disks, the
   variable cost is VM compute while running.
+- **Save import is chunked, on purpose:** the console uploads through the coordinator, and Cloud Run rejects a
+  request body over 32 MiB, so `POST /api/saves/upload` opens a session and the browser sends ordered
+  `.../upload/<id>/part?index=N` slices (`UPLOAD_PART_MAX_BYTES`, 24 MiB) that the agent appends to one file
+  before `.../finish` extracts it. Parts must arrive in order (append-only file); a failed part truncates back
+  to the last good offset. Archives are extracted member-by-member with traversal/symlink rejection and an
+  uncompressed-size cap (`SAVE_MAX_BYTES`) — never `tar xzf` on untrusted input. An import always lands as a
+  NEW slot; it never overwrites a world.
 - **Discord bot:** `POST /api/discord/interactions` is handled *before* the auth gate and authenticated by
   Ed25519 signature (`DISCORD_PUBLIC_KEY`; empty = 404). Discord roles map to the same perm set, then flow
   through the usual `_rbac_headers()` signing — no privileged side-channel. Answer within ~3s or Discord drops

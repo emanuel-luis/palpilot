@@ -33,6 +33,7 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 - **Save slots** — create, switch, clone, rename, delete; the active world is switched safely (stop → backup → switch → restart).
 - **Per-save settings & mods** — each save keeps its own `PalWorldSettings.ini` and mod set; they travel with the save when you clone or switch.
 - **Backups & restore** — per-slot backups to the VM disk **and** Google Cloud Storage, with retention pruning and one-click restore.
+- **Import & export worlds** — download any slot as a `.tar.gz`, and upload a world back (that `.tar.gz` or a `.zip` of a world folder) as a new slot; large files upload in chunks.
 - **Mods** — install `.pak` / LogicMods natively; UE4SS script mods are supported via an optional Proton runtime.
 - **Settings editor** — schema-aware, searchable editor for `PalWorldSettings.ini`, plus a raw editor.
 - **In-game commands** — announce, kick, ban/unban, save, and restart/stop the game (without powering off the VM).

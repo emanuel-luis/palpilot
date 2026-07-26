@@ -22,6 +22,12 @@ Config via env vars:
                                 Empty => signed mode disabled, Basic-Auth only.
   BACKUP_KEEP                   backups kept per slot, local + remote (default 5)
   MOD_MAX_BYTES                 byte ceiling for mod upload/url-install (default 500MB)
+  SAVE_MAX_BYTES                byte ceiling for an imported world archive, compressed and
+                                 uncompressed (default 2GB)
+  UPLOAD_PART_MAX_BYTES         byte ceiling per upload part (default 24MB; must stay under
+                                 Cloud Run's 32MiB request cap, since parts come via the
+                                 coordinator)
+  UPLOAD_SESSION_TTL            seconds before an abandoned upload session is swept (default 6h)
   RUNTIME_MODE                  "native" (default, unchanged) or "proton"; gates the UE4SS
                                  mod capability -- native servers can only run pak/LogicMods
   LOGICMODS_DIR                 path to Paks/LogicMods (default under STEAM_DIR)
@@ -44,8 +50,10 @@ import re
 import secrets
 import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.error
@@ -120,6 +128,15 @@ RUNTIME_MODE = os.environ.get("RUNTIME_MODE", "native")
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "5"))
 # Byte ceiling for mod uploads / url-installs (default 500MB).
 MOD_MAX_BYTES = int(os.environ.get("MOD_MAX_BYTES", str(500 * 1024 * 1024)))
+# Save import: ceiling for a whole uploaded archive (and for its uncompressed
+# payload, which is the zip-bomb guard), plus the per-part ceiling. Parts exist
+# because the console uploads through the coordinator, and that's a Cloud
+# Function: Cloud Run rejects a request body over 32 MiB, so 24 MiB parts leave
+# headroom for headers/encoding.
+SAVE_MAX_BYTES = int(os.environ.get("SAVE_MAX_BYTES", str(2 * 1024 * 1024 * 1024)))
+UPLOAD_PART_MAX_BYTES = int(os.environ.get("UPLOAD_PART_MAX_BYTES", str(24 * 1024 * 1024)))
+# Abandoned upload sessions (browser closed mid-upload) are swept on the next init.
+UPLOAD_SESSION_TTL = int(os.environ.get("UPLOAD_SESSION_TTL", str(6 * 3600)))
 
 
 def _gce_project_id() -> str:
@@ -1046,6 +1063,219 @@ def restore_backup(guid: str, ref: str, as_new_slot: bool = False, name: str = "
     }
 
 
+# ---- import (upload) a world: the inverse of the download endpoints ----
+#
+# Accepts what /download produces (a .tar.gz of the world folder) and also a
+# plain .zip of a world directory, since that's what people have lying around
+# from a local/host server. Always lands as a NEW slot: importing never
+# overwrites a world you already have -- activate it when you're ready.
+#
+# Uploading goes through an upload *session* (init -> ordered parts -> finish)
+# because the console talks to the coordinator, a Cloud Function, and Cloud Run
+# refuses a request body over 32 MiB. Parts are appended to one file on the VM's
+# own disk, so the archive is only ever assembled here.
+
+
+def _uploads_root() -> str:
+    d = os.path.join(tempfile.gettempdir(), "palworld-uploads")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _prune_upload_sessions():
+    now = time.time()
+    root = _uploads_root()
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return
+    for name in entries:
+        path = os.path.join(root, name)
+        try:
+            if now - os.path.getmtime(path) > UPLOAD_SESSION_TTL:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def _upload_dir(uid: str) -> str:
+    """Session directory for `uid`, or "" if the id is malformed/unknown. The
+    strict token shape is what keeps this off arbitrary paths."""
+    if not re.fullmatch(r"[a-f0-9]{24}", uid or ""):
+        return ""
+    path = os.path.join(_uploads_root(), uid)
+    return path if os.path.isdir(path) else ""
+
+
+def _upload_meta_path(d: str) -> str:
+    return os.path.join(d, "meta.json")
+
+
+def _read_upload_meta(d: str) -> dict:
+    try:
+        with open(_upload_meta_path(d), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_upload_meta(d: str, meta: dict):
+    atomic_write(_upload_meta_path(d), json.dumps(meta, indent=2))
+
+
+def start_upload_session(filename: str = "", name: str = "") -> dict:
+    _prune_upload_sessions()
+    uid = secrets.token_hex(12)
+    d = os.path.join(_uploads_root(), uid)
+    os.makedirs(d, exist_ok=True)
+    _write_upload_meta(
+        d,
+        {"filename": _safe_name(filename), "name": (name or "").strip(), "parts": 0, "bytes": 0},
+    )
+    return {
+        "ok": True,
+        "error": None,
+        "upload_id": uid,
+        "part_max_bytes": UPLOAD_PART_MAX_BYTES,
+        "max_bytes": SAVE_MAX_BYTES,
+    }
+
+
+def abort_upload_session(uid: str) -> dict:
+    d = _upload_dir(uid)
+    if not d:
+        return {"ok": False, "reason": "not_found", "error": "upload session not found"}
+    shutil.rmtree(d, ignore_errors=True)
+    return {"ok": True, "error": None, "aborted": uid}
+
+
+def _safe_extract_archive(archive: str, dest: str, max_bytes: int) -> int:
+    """Extract a .tar.gz / .zip into `dest`, refusing anything that could write
+    outside it (absolute paths, "..") and skipping non-regular entries
+    (symlinks, hardlinks, devices). Stops if the *uncompressed* payload exceeds
+    `max_bytes`, which is the zip-bomb guard. Returns bytes written."""
+
+    def target_for(member_name: str) -> str:
+        parts = [p for p in member_name.replace("\\", "/").split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            raise ValueError(f"unsafe path in archive: {member_name!r}")
+        return os.path.join(dest, *parts) if parts else ""
+
+    total = 0
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            for info in zf.infolist():
+                path = target_for(info.filename)
+                if not path:
+                    continue
+                if info.is_dir():
+                    os.makedirs(path, exist_ok=True)
+                    continue
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    continue
+                total += info.file_size
+                if total > max_bytes:
+                    raise ValueError(f"archive contents exceed {max_bytes} bytes")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with zf.open(info) as src, open(path, "wb") as out:
+                    shutil.copyfileobj(src, out, 1024 * 1024)
+        return total
+
+    if tarfile.is_tarfile(archive):
+        with tarfile.open(archive) as tf:
+            for member in tf:
+                path = target_for(member.name)
+                if not path:
+                    continue
+                if member.isdir():
+                    os.makedirs(path, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    continue
+                total += member.size
+                if total > max_bytes:
+                    raise ValueError(f"archive contents exceed {max_bytes} bytes")
+                src = tf.extractfile(member)
+                if src is None:
+                    continue
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with src, open(path, "wb") as out:
+                    shutil.copyfileobj(src, out, 1024 * 1024)
+        return total
+
+    raise ValueError("unrecognized archive (expected .tar.gz or .zip)")
+
+
+def _find_world_dir(root: str) -> str:
+    """Shallowest directory under `root` that holds a Level.sav -- that's the
+    world folder, whether the archive wrapped it in a GUID directory (what our
+    own download produces), nested it under Saved/SaveGames/0/<guid>, or zipped
+    the world's files at the top level."""
+    best, best_depth = "", 1 << 30
+    for current, _dirs, files in os.walk(root):
+        if any(f.lower() == "level.sav" for f in files):
+            depth = current[len(root):].count(os.sep)
+            if depth < best_depth:
+                best, best_depth = current, depth
+    return best
+
+
+def import_world_archive(archive_path: str, name: str = "") -> dict:
+    """Extract an uploaded world archive into a brand-new slot."""
+    extract_root = os.path.join(tempfile.gettempdir(), f"import-{secrets.token_hex(6)}")
+    try:
+        os.makedirs(extract_root, exist_ok=True)
+        try:
+            _safe_extract_archive(archive_path, extract_root, SAVE_MAX_BYTES)
+        except (ValueError, tarfile.TarError, zipfile.BadZipFile, OSError) as e:
+            return {"ok": False, "reason": "validation", "error": f"could not read archive: {e}"}
+        world = _find_world_dir(extract_root)
+        if not world:
+            return {
+                "ok": False,
+                "reason": "validation",
+                "error": "no Palworld world in the archive (no Level.sav found)",
+            }
+        guid = secrets.token_hex(16).upper()
+        dest = os.path.join(SAVEGAMES_DIR, guid)
+        try:
+            os.makedirs(SAVEGAMES_DIR, exist_ok=True)
+            shutil.move(world, dest)
+            _chown_steam(dest, recursive=True)
+        except OSError as e:
+            shutil.rmtree(dest, ignore_errors=True)
+            return {"ok": False, "reason": "conflict", "error": f"could not install world: {e}"}
+    finally:
+        shutil.rmtree(extract_root, ignore_errors=True)
+
+    friendly = _safe_name(name) or f"imported-{_timestamp()}"
+    meta = _load_slots_meta()
+    meta[guid] = {"name": friendly, "created": _timestamp(), "imported": True}
+    _save_slots_meta(meta)
+    return {
+        "ok": True,
+        "error": None,
+        "guid": guid,
+        "name": friendly,
+        "size": _dir_size(dest),
+        "note": "imported as a new slot -- activate it when you want to play it",
+    }
+
+
+def finish_upload_session(uid: str, name: str = "") -> dict:
+    d = _upload_dir(uid)
+    if not d:
+        return {"ok": False, "reason": "not_found", "error": "upload session not found"}
+    meta = _read_upload_meta(d)
+    archive = os.path.join(d, "archive")
+    try:
+        if not meta.get("bytes") or not os.path.isfile(archive):
+            return {"ok": False, "reason": "validation", "error": "no data uploaded"}
+        return import_world_archive(archive, name or meta.get("name") or meta.get("filename") or "")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def delete_slot(guid: str) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
         return {"ok": False, "reason": "validation", "error": "invalid guid"}
@@ -1885,15 +2115,20 @@ def build_app():
             )
 
         # Restart after replying so the client gets a response first.
+        #
+        # One unit per `systemctl` call, deliberately: the sudoers drop-in
+        # (startup.sh) whitelists `systemctl restart palworld-panel` and
+        # `systemctl restart palworld-watchdog` as separate commands, and sudo
+        # matches the full argument list -- restarting both in a single call
+        # matches nothing and is denied. Since this Popen is fire-and-forget,
+        # that denial used to be invisible: the endpoint answered
+        # {"updated": true, "restarting": true} while the old code kept running,
+        # and only a fresh VM boot ever picked up a new agent.
         sudo = "sudo -n " if os.geteuid() != 0 else ""
-        subprocess.Popen(
-            [
-                "bash",
-                "-c",
-                f"sleep 1; {sudo}systemctl restart {SERVICE_NAME}-panel {SERVICE_NAME}-watchdog",
-            ]
-        )
-        return {"updated": True, "restarting": True}
+        units = [f"{SERVICE_NAME}-watchdog", f"{SERVICE_NAME}-panel"]  # panel last: it kills us
+        script = "sleep 1; " + "; ".join(f"{sudo}systemctl restart {u}" for u in units)
+        subprocess.Popen(["bash", "-c", script])
+        return {"updated": True, "restarting": True, "units": units}
 
     # ---- config (.ini) ----
 
@@ -1983,6 +2218,65 @@ def build_app():
     async def saves_create(payload: dict, _: str = Depends(require("saves"))):
         name = (payload or {}).get("name") or ""
         return _envelope(create_slot(name))
+
+    # ---- save import: chunked upload session (init -> parts -> finish) ----
+    # Declared before the /api/saves/{guid}/* routes so "upload" is never read
+    # as a guid.
+
+    @app.post("/api/saves/upload")
+    async def saves_upload_init(payload: dict | None = None, _: str = Depends(require("saves"))):
+        payload = payload or {}
+        return _envelope(
+            start_upload_session(payload.get("filename") or "", payload.get("name") or "")
+        )
+
+    @app.post("/api/saves/upload/{uid}/part")
+    async def saves_upload_part(
+        uid: str, request: Request, index: int = 0, _: str = Depends(require("saves"))
+    ):
+        d = _upload_dir(uid)
+        if not d:
+            raise HTTPException(404, "upload session not found")
+        meta = _read_upload_meta(d)
+        already = int(meta.get("bytes") or 0)
+        expected = int(meta.get("parts") or 0)
+        # Parts must arrive in order: the archive is a single append-only file,
+        # so an out-of-order part would silently corrupt it.
+        if index != expected:
+            raise HTTPException(409, f"expected part {expected}, got {index}")
+        archive = os.path.join(d, "archive")
+        written = 0
+        try:
+            with open(archive, "ab") as f:
+                async for chunk in request.stream():
+                    written += len(chunk)
+                    if written > UPLOAD_PART_MAX_BYTES:
+                        raise HTTPException(400, f"part exceeds {UPLOAD_PART_MAX_BYTES} bytes")
+                    if already + written > SAVE_MAX_BYTES:
+                        raise HTTPException(400, f"upload exceeds SAVE_MAX_BYTES ({SAVE_MAX_BYTES})")
+                    f.write(chunk)
+        except BaseException:
+            # Roll the file back to the last complete part so a retry of this
+            # index still lines up (a half-written part is worse than none).
+            try:
+                os.truncate(archive, already)
+            except OSError:
+                pass
+            raise
+        meta["parts"] = index + 1
+        meta["bytes"] = already + written
+        _write_upload_meta(d, meta)
+        return _envelope({"ok": True, "parts": meta["parts"], "bytes": meta["bytes"]})
+
+    @app.post("/api/saves/upload/{uid}/finish")
+    async def saves_upload_finish(
+        uid: str, payload: dict | None = None, _: str = Depends(require("saves"))
+    ):
+        return _envelope(finish_upload_session(uid, (payload or {}).get("name") or ""))
+
+    @app.delete("/api/saves/upload/{uid}")
+    def saves_upload_abort(uid: str, _: str = Depends(require("saves"))):
+        return _envelope(abort_upload_session(uid))
 
     @app.post("/api/saves/{guid}/clone")
     async def saves_clone(guid: str, payload: dict, _: str = Depends(require("saves"))):
