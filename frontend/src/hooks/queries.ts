@@ -1,157 +1,152 @@
-// All server-state hooks in one place. Each mirrors an endpoint in §6.
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import { session, useSession } from "@/stores/session";
 
-// ── overview / power ────────────────────────────────────────────────
 export function useOverview() {
   const s = useSession();
   return useQuery({
     queryKey: ["overview"],
-    queryFn: async () => {
-      const r = await apiGet("/api/overview");
-      if (!r.ok && r.status !== 503) throw new Error(r.error || "load_failed");
-      return r;
-    },
-    refetchInterval: s.authed ? 8000 : false,
+    queryFn: () => apiGet<any>("/api/overview"),
     enabled: s.authed && s.ready,
+    refetchInterval: (q) => {
+      const st = (q.state.data as any)?.data?.vm?.status;
+      if (st === "PROVISIONING" || st === "STAGING" || st === "STOPPING") return 3000;
+      if (st === "RUNNING") return 6000;
+      return 10000;
+    },
+    refetchOnWindowFocus: true,
+    staleTime: 1000,
   });
 }
 
-export function useStartVm() {
+export function usePower() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiPost("/api/vm/start"),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["overview"] }), 3000),
-  });
-}
-export function useStopVm() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => apiPost("/api/vm/stop"),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["overview"] }), 3000),
+    mutationFn: (action: "start" | "stop") => apiPost(`/api/power/${action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["overview"] }),
   });
 }
 
-// ── watchdog ────────────────────────────────────────────────────────
+export function useSaves() {
+  return useQuery({
+    queryKey: ["saves"],
+    queryFn: () => apiGet<any>("/api/saves").then((r) => (r.ok ? r.data : Promise.reject(r))),
+    enabled: session.can("view"),
+  });
+}
+export function useActivateSave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/api/saves/${encodeURIComponent(id)}/activate`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["saves"] }); qc.invalidateQueries({ queryKey: ["overview"] }); },
+  });
+}
+export function useDeleteSave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/api/saves/${encodeURIComponent(id)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saves"] }),
+  });
+}
+export function useRenameSave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => apiPost(`/api/saves/${encodeURIComponent(id)}/rename`, { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saves"] }),
+  });
+}
+export function useBackupSave() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/api/saves/${encodeURIComponent(id)}/backup`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saves"] }),
+  });
+}
+export function useRestoreBackup() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, backup }: { id: string; backup: string }) => apiPost(`/api/saves/${encodeURIComponent(id)}/restore`, { backup }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saves"] }),
+  });
+}
+
+export function useSettings() {
+  return useQuery({
+    queryKey: ["settings"],
+    queryFn: () => apiGet<any>("/api/settings").then((r) => (r.ok ? r.data : Promise.reject(r))),
+    enabled: session.can("view"),
+  });
+}
+export function useSaveSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { changes?: Record<string, string>; raw?: string }) => apiPost("/api/settings", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+export function useMods() {
+  return useQuery({
+    queryKey: ["mods"],
+    queryFn: () => apiGet<any>("/api/mods").then((r) => (r.ok ? r.data : Promise.reject(r))),
+    enabled: session.can("view"),
+  });
+}
+
 export function useWatchdog() {
-  const s = useSession();
   return useQuery({
     queryKey: ["watchdog"],
-    queryFn: async () => {
-      const r = await apiGet("/api/watchdog");
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return r.data as { poll_seconds: number; grace_seconds: number };
-    },
-    enabled: s.authed && session.can("view"),
+    queryFn: () => apiGet<any>("/api/watchdog").then((r) => (r.ok ? r.data : Promise.reject(r))),
+    enabled: session.authed,
   });
 }
 export function useSaveWatchdog() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { poll_seconds: number; grace_seconds: number }) => apiPost("/api/watchdog", v),
+    mutationFn: (body: { poll_seconds: number; grace_seconds: number }) => apiPost("/api/watchdog", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchdog"] }),
   });
 }
 
-// ── saves ───────────────────────────────────────────────────────────
-export function useSaves(enabled = true) {
-  return useQuery({
-    queryKey: ["saves"],
-    queryFn: async () => {
-      const r = await apiGet("/api/saves");
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return r.data as { active: string; slots: any[] };
-    },
-    enabled,
-  });
-}
-export function useSaveBackups(guid: string | null) {
-  return useQuery({
-    queryKey: ["backups", guid],
-    queryFn: async () => {
-      const r = await apiGet(`/api/saves/${guid}/backups`);
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return (r.data as any).backups as any[];
-    },
-    enabled: !!guid,
-  });
-}
-
-// ── mods ────────────────────────────────────────────────────────────
-export function useMods(enabled = true) {
-  return useQuery({
-    queryKey: ["mods"],
-    queryFn: async () => {
-      const r = await apiGet("/api/mods");
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return r.data as { dir: string; runtime_mode: "native"|"proton"; capabilities: { pak: boolean; logic: boolean; ue4ss: boolean }; mods: any[] };
-    },
-    enabled,
-  });
-}
-
-// ── settings ────────────────────────────────────────────────────────
-export function useSettings(enabled = true) {
-  return useQuery({
-    queryKey: ["settings"],
-    queryFn: async () => {
-      const [cfg, eff] = await Promise.all([apiGet("/api/config"), apiGet("/api/rest/settings")]);
-      if (!cfg.ok || !eff.ok) throw new Error("load_failed");
-      return { config: cfg.data as any, effective: eff.data as Record<string, any> };
-    },
-    enabled,
-  });
-}
-
-// ── users / roles ───────────────────────────────────────────────────
 export function useUsers() {
   return useQuery({
     queryKey: ["users"],
-    queryFn: async () => {
-      const r = await apiGet("/api/users");
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return r.data as { users: any[]; all_perms: string[]; roles: string[] };
-    },
+    queryFn: () => apiGet<any>("/api/users").then((r) => (r.ok ? r.data : Promise.reject(r))),
     enabled: session.can("users"),
   });
 }
 export function useRoles() {
   return useQuery({
     queryKey: ["roles"],
-    queryFn: async () => {
-      const r = await apiGet("/api/roles");
-      if (!r.ok) throw new Error(r.error || "load_failed");
-      return r.data as { roles: any[]; all_perms: string[] };
-    },
+    queryFn: () => apiGet<any>("/api/roles").then((r) => (r.ok ? r.data : Promise.reject(r))),
     enabled: session.can("users"),
   });
 }
 export function useUpsertUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (u: { username: string; password?: string; role?: string; perms?: string[] }) => apiPost("/api/users", u),
-    onSuccess: (r) => { if (r.ok) qc.setQueryData(["users"], r.data); },
+    mutationFn: (body: any) => apiPost("/api/users", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 export function useDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => apiDelete(`/api/users/${encodeURIComponent(name)}`),
-    onSuccess: (r) => { if (r.ok) qc.setQueryData(["users"], r.data); },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 export function useUpsertRole() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (r: { name: string; perms: string[] }) => apiPost("/api/roles", r),
-    onSuccess: (r) => { if (r.ok) { qc.setQueryData(["roles"], r.data); qc.invalidateQueries({ queryKey: ["users"] }); } },
+    mutationFn: (body: { name: string; perms: string[] }) => apiPost("/api/roles", body),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["roles"] }); qc.invalidateQueries({ queryKey: ["users"] }); },
   });
 }
 export function useDeleteRole() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => apiDelete(`/api/roles/${encodeURIComponent(name)}`),
-    onSuccess: (r) => { if (r.ok) qc.setQueryData(["roles"], r.data); },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["roles"] }),
   });
 }

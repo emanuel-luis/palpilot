@@ -1,21 +1,22 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 
-const listeners = new Set<() => void>();
-window.addEventListener("hashchange", () => listeners.forEach((l) => l()));
-
-function get(): string {
-  const h = window.location.hash.replace(/^#/, "") || "/console";
-  return h;
+function currentPath(): string {
+  const h = window.location.hash.replace(/^#/, "");
+  return h || "/console";
 }
 
 export function useHashRoute(): string {
-  return useSyncExternalStore(
-    (l) => { listeners.add(l); return () => listeners.delete(l); },
-    get,
-    get
-  );
+  const [path, setPath] = useState(currentPath());
+  useEffect(() => {
+    function onChange() { setPath(currentPath()); }
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return path;
 }
 
-export function navigate(hash: string) {
-  window.location.hash = hash.startsWith("/") ? hash : "/" + hash;
+export function navigate(path: string): void {
+  const next = path.startsWith("/") ? path : `/${path}`;
+  if (window.location.hash === `#${next}`) return;
+  window.location.hash = next;
 }
