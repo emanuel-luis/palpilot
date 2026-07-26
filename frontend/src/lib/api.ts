@@ -18,7 +18,13 @@
 import { session } from "@/stores/session";
 import { mockFetch, isMockEnabled } from "@/mocks";
 
-export const BASE = location.pathname.replace(/\/+$/, "");
+// API base. This MUST NOT be derived from location.pathname any more: the
+// coordinator now serves an SPA fallback, so a deep link or reload lands on
+// /console and pathname is no longer the mount point — every call would resolve
+// to /console/api/... Cloud Run serves the service at the origin root, so the
+// base is empty; set VITE_API_BASE at build time if it is ever mounted under a
+// path prefix.
+export const BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/+$/, "");
 
 export type ApiResult<T = any> = {
   ok: boolean;

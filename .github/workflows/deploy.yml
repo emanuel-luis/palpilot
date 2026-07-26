@@ -68,8 +68,12 @@ jobs:
           npm ci
           npm run build
 
-      - name: Validate coordinator (py_compile)
-        run: python3 -m py_compile coordinator/main.py
+      # Runs after the frontend build so the asset tests have real hashed files
+      # to serve. Guards the static/SPA routing and that the API is still gated.
+      - name: Validate coordinator (py_compile + static route tests)
+        run: |
+          python3 -m py_compile coordinator/main.py
+          (cd coordinator && python3 -m unittest -q tests.test_static_routes)
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)
@@ -80,26 +84,47 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      # Redeploys code + the freshly built UI. Existing env vars (secrets) and
-      # the runtime service account are preserved by gcloud across redeploys;
-      # the non-secret service config is re-asserted here to stay deterministic.
-      - name: Deploy coordinator
+      # Cloud Run, not a Cloud Function: the container serves the multi-file
+      # console (index.html + hashed assets/) AND the API from one origin, which
+      # is what makes route-level code splitting possible. `--source` hands the
+      # directory to Cloud Build, which uses coordinator/Dockerfile and pushes the
+      # image to Artifact Registry.
+      #
+      # Env vars and the runtime service account are preserved by gcloud across
+      # redeploys (Terraform owns them); only the non-secret service shape is
+      # re-asserted here so it stays deterministic.
+      - name: Deploy coordinator (Cloud Run)
         run: |
-          gcloud functions deploy palworld-coordinator \
-            --gen2 \
+          gcloud run deploy palpilot-coordinator \
             --project="$PROJECT" \
             --region="$REGION" \
-            --runtime=python312 \
-            --entry-point=coordinator \
             --source=coordinator \
-            --trigger-http \
             --service-account="palworld-coordinator@${PROJECT}.iam.gserviceaccount.com" \
+            --port=8080 \
             --memory=512Mi \
             --timeout=300s \
             --min-instances=0 \
             --max-instances=2 \
             --allow-unauthenticated \
             --quiet
+
+      # Fails the deploy if the console didn't actually ship: the container must
+      # serve the app shell at / and the hashed asset the shell references.
+      - name: Smoke-test the deployed console
+        run: |
+          URL="$(gcloud run services describe palpilot-coordinator \
+                   --project="$PROJECT" --region="$REGION" --format='value(status.url)')"
+          echo "coordinator: $URL"
+          code=$(curl -sS -o /tmp/index.html -w '%{http_code}' "$URL/")
+          test "$code" = "200" || { echo "GET / returned $code"; exit 1; }
+          asset=$(grep -oE '/assets/[A-Za-z0-9._-]+\.js' /tmp/index.html | head -1)
+          test -n "$asset" || { echo "index.html references no /assets/*.js"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL$asset")
+          test "$code" = "200" || { echo "asset $asset returned $code"; exit 1; }
+          # The API must still be gated after all this.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/api/overview")
+          test "$code" = "401" || { echo "/api/overview returned $code, expected 401"; exit 1; }
+          echo "console + assets served, API still gated"
 
   deploy-panel:
     needs: changes

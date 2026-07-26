@@ -173,6 +173,165 @@ resource "google_cloudfunctions2_function" "coordinator" {
 
 
 #
+# Cloud Run service — the coordinator's new home.
+#
+# Why move off the gen2 function: the function could only serve ONE file, because
+# nothing routed static assets, so the console had to be inlined into a single
+# document and could never code-split. A container serves index.html + hashed
+# assets/ + the API from one origin (see coordinator/Dockerfile and the static
+# routes in main.py), which unlocks route-level lazy loading and lets assets be
+# cached immutably instead of the whole app being no-store.
+#
+# Cost is unchanged: still scale-to-zero, still no load balancer.
+#
+# NOTE the gen2 function above is deliberately KEPT for now as a transitional
+# shim. The VM's watchdog receives the coordinator URL through instance metadata
+# and only re-reads it on boot, so deleting the function before the VM reboots
+# would leave the watchdog unable to call /api/vm/stop -- the VM would stay up
+# and bill indefinitely, which is the one regression this product cannot afford.
+# Remove the function (and its zip/archive resources) after the VM has rebooted
+# onto the new URL and the Discord endpoint has been re-registered.
+#
+resource "google_artifact_registry_repository" "coordinator" {
+  location      = var.region
+  repository_id = "palpilot"
+  format        = "DOCKER"
+  description   = "PalPilot coordinator container images"
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_cloud_run_v2_service" "coordinator" {
+  name                = "palpilot-coordinator"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
+
+  template {
+    service_account = google_service_account.coordinator.email
+    timeout         = "300s"
+
+    # The module holds in-process state (per-IP login throttle, the 10s GCS
+    # document cache). Concurrency is fine -- gunicorn runs one worker with
+    # threads -- but more than a couple of instances would fragment it.
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 2
+    }
+
+    containers {
+      # Placeholder only. The real image is pushed by CI (`gcloud run deploy
+      # --source coordinator`); `ignore_changes` below stops Terraform reverting
+      # it on the next apply. Cloud Run needs *an* image to create the service,
+      # hence Google's public hello container for the very first apply.
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
+
+      ports {
+        container_port = 8080
+      }
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+
+      env {
+        name  = "PROJECT_ID"
+        value = var.project_id
+      }
+      env {
+        name  = "VM_ZONE"
+        value = var.zone
+      }
+      env {
+        name  = "VM_INSTANCE"
+        value = "palworld-tf-vm"
+      }
+      env {
+        name  = "VM_IP"
+        value = google_compute_address.palworld_ip.address
+      }
+      env {
+        name  = "VM_PORT"
+        value = tostring(var.panel_port)
+      }
+      env {
+        name  = "GAME_PORT"
+        value = "8211" # matches the UDP firewall rule in main.tf
+      }
+      env {
+        name  = "PANEL_BUCKET"
+        value = google_storage_bucket.palworld_panel.name
+      }
+      env {
+        name  = "PANEL_USER"
+        value = var.panel_user
+      }
+      env {
+        name  = "PANEL_PASSWORD"
+        value = var.panel_password
+      }
+      env {
+        name  = "INTERNAL_TOKEN"
+        value = var.internal_token
+      }
+      env {
+        name  = "IDLE_POLL_DEFAULT"
+        value = tostring(var.idle_poll_seconds)
+      }
+      env {
+        name  = "IDLE_GRACE_DEFAULT"
+        value = tostring(var.idle_grace_seconds)
+      }
+      # Discord bot (docs/DISCORD.md). Empty public key = endpoint disabled.
+      env {
+        name  = "DISCORD_PUBLIC_KEY"
+        value = var.discord_public_key
+      }
+      env {
+        name  = "DISCORD_GUILD_ID"
+        value = var.discord_guild_id
+      }
+      env {
+        name  = "DISCORD_ADMIN_ROLE_IDS"
+        value = var.discord_admin_role_ids
+      }
+      env {
+        name  = "DISCORD_USER_ROLE_IDS"
+        value = var.discord_user_role_ids
+      }
+    }
+  }
+
+  lifecycle {
+    # CI owns the image; Terraform owns the service shape.
+    ignore_changes = [
+      template[0].containers[0].image,
+      client,
+      client_version,
+    ]
+  }
+
+  depends_on = [
+    google_project_service.apis,
+    google_artifact_registry_repository.coordinator,
+  ]
+}
+
+# The app does its own auth (session tokens / Ed25519 for Discord), exactly as it
+# did behind the function's --allow-unauthenticated.
+resource "google_cloud_run_v2_service_iam_member" "coordinator_public" {
+  project  = google_cloud_run_v2_service.coordinator.project
+  location = google_cloud_run_v2_service.coordinator.location
+  name     = google_cloud_run_v2_service.coordinator.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+
+#
 # Permitir invocação pública (o app faz basic auth por conta própria)
 #
 resource "google_cloud_run_service_iam_member" "coordinator_invoker" {
@@ -218,7 +377,7 @@ resource "google_monitoring_uptime_check_config" "coordinator" {
   monitored_resource {
     type = "uptime_url"
     labels = {
-      host = replace(replace(google_cloudfunctions2_function.coordinator.url, "https://", ""), "/", "")
+      host = replace(replace(google_cloud_run_v2_service.coordinator.uri, "https://", ""), "/", "")
     }
   }
 
