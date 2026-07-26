@@ -197,6 +197,43 @@ export function useSaveSettings() {
   });
 }
 
+/**
+ * Settings for ONE save, which may not be the active one.
+ *
+ * Under /api/config rather than /api/saves on purpose: that prefix is gated
+ * view/settings by the coordinator, which is the right permission for editing
+ * settings — /api/saves would have applied the `saves` permission instead.
+ *
+ * For the active slot the server reads the live file, so this and useSettings()
+ * agree. For any other slot it reads that slot's stored copy, and `stored:false`
+ * means the slot has never been activated and has no config of its own yet.
+ */
+export function useSlotSettings(guid: string | null) {
+  return useQuery({
+    queryKey: ["settings", "slot", guid],
+    queryFn: () => apiGet<any>(`/api/config/slot/${encodeURIComponent(guid!)}`).then(unwrap),
+    enabled: !!guid && session.can("view"),
+  });
+}
+
+export function useSaveSlotSettings(guid: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ options, raw, restart }: { options?: Record<string, string>; raw?: string; restart?: boolean }) =>
+      apiPost(
+        `/api/config/slot/${encodeURIComponent(guid!)}`,
+        options ? { options } : { raw },
+        { query: `restart=${!!restart}` },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      // Editing the active slot rewrites the live file, so the overview's
+      // server name can change too.
+      qc.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
+}
+
 export function useResetSettings() {
   const qc = useQueryClient();
   return useMutation({

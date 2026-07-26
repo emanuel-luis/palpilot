@@ -8,7 +8,11 @@
 // field, which meant a half-applied config if one call failed.
 import { useEffect, useMemo, useState } from "react";
 import { RotateCcw, Save, Search, Undo2 } from "lucide-react";
-import { useSettings, useSaveSettings, useResetSettings, useRestartGame, isOffline } from "@/hooks/queries";
+import {
+  useSettings, useSaveSettings, useResetSettings, useRestartGame,
+  useSlotSettings, useSaveSlotSettings, useSaves, isOffline,
+} from "@/hooks/queries";
+import { useHashRoute, navigate } from "@/hooks/useHashRoute";
 import { SETTINGS_META, easeHint } from "@/data/settingsMeta";
 import {
   SPECS, TAB_ORDER, TAB_META, LOAD_BEARING, tabFor, inferKind,
@@ -223,8 +227,26 @@ function Field({
 }
 
 export function SettingsPage() {
-  const q = useSettings();
-  const save = useSaveSettings();
+  // /settings        -> the live config of whatever save is active
+  // /settings/<guid> -> that save's own config, active or not
+  const route = useHashRoute();
+  const slug = route.startsWith("/settings/") ? decodeURIComponent(route.slice("/settings/".length)) : "";
+  const slotGuid = slug || null;
+
+  const savesQ = useSaves();
+  const slots: any[] = !isOffline(savesQ.data) ? ((savesQ.data as any)?.slots ?? []) : [];
+  const slot = slotGuid ? slots.find((x) => x.guid === slotGuid) : undefined;
+  const activeGuid = !isOffline(savesQ.data) ? (savesQ.data as any)?.active : undefined;
+  const editingActive = !slotGuid || slotGuid === activeGuid;
+
+  const liveQ = useSettings();
+  const slotQ = useSlotSettings(slotGuid);
+  const q: any = slotGuid ? slotQ : liveQ;
+
+  const saveLive = useSaveSettings();
+  const saveSlot = useSaveSlotSettings(slotGuid);
+  const save: any = slotGuid ? saveSlot : saveLive;
+
   const reset = useResetSettings();
   const restart = useRestartGame();
   const canWrite = session.can("settings");
@@ -315,6 +337,23 @@ export function SettingsPage() {
     // required for the change to mean anything. Rather than deciding for the
     // user, offer both ways forward — writing the file now and restarting later
     // is a legitimate choice when players are mid-session.
+    if (!editingActive) {
+      // Nothing to restart into: this save isn't the one running. Write it and
+      // say when it will take effect.
+      const ok = await confirm({
+        title: `Save ${changedKeys.length} change${changedKeys.length === 1 ? "" : "s"} to "${slot?.name ?? slotGuid}"?`,
+        message:
+          "This save isn't the active one, so nothing restarts and the running server is untouched. " +
+          "These settings apply when you activate this save.",
+        confirmLabel: "Save to this world",
+      });
+      if (!ok) return;
+      const rs = await save.mutateAsync({ options: changed, restart: false });
+      if (!rs.ok) toast.err(rs.error || "Couldn't save the settings.");
+      else toast.ok(`Saved to "${slot?.name ?? slotGuid}". They apply when you activate it.`);
+      return;
+    }
+
     const answer = await choose({
       title: `Apply ${changedKeys.length} change${changedKeys.length === 1 ? "" : "s"}?`,
       message:
@@ -373,14 +412,24 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader
-        title="Server settings"
-        description="Applies to the active save — each save keeps its own copy. Change as many fields as you like, then apply them together."
+        title={slotGuid ? `Settings — ${slot?.name ?? slotGuid}` : "Server settings"}
+        description={
+          slotGuid
+            ? editingActive
+              ? "This is the active save, so changes affect the running server."
+              : "Editing a save that isn't running. Nothing restarts, and these settings take effect when you activate it."
+            : "Applies to the active save — each save keeps its own copy. Change as many fields as you like, then apply them together."
+        }
         actions={
           canWrite ? (
             <>
-              <Button variant="ghost" size="sm" onClick={resetAll} disabled={reset.isPending}>
-                <RotateCcw /> Reset all
-              </Button>
+              {/* Reset targets the live config, so it is meaningless (and
+                  dangerous) while scoped to another save. */}
+              {editingActive ? (
+                <Button variant="ghost" size="sm" onClick={resetAll} disabled={reset.isPending}>
+                  <RotateCcw /> Reset all
+                </Button>
+              ) : null}
               <Button
                 variant={changedKeys.length ? "primary" : "secondary"}
                 size="sm"
@@ -394,6 +443,20 @@ export function SettingsPage() {
           ) : null
         }
       />
+
+      {slotGuid && !editingActive ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-signal/40 bg-signal/[0.06] px-4 py-2.5 text-xs">
+          <Badge tone="info">not active</Badge>
+          <span className="text-muted">
+            {loaded && (loaded as any).stored === false
+              ? "This save has no settings of its own yet — it starts from the current live config, and saving gives it its own copy."
+              : "Changes are stored with this save and applied when you activate it."}
+          </span>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => navigate("/saves")}>
+            Back to saves
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative">

@@ -210,5 +210,116 @@ class TestReadLog(unittest.TestCase):
         self.assertEqual(panel.read_log()["file"], "Pal-2.log")
 
 
+
+
+class TestSlotConfig(unittest.TestCase):
+    """Per-slot settings. The risk here is writing to the wrong file, so every
+    case asserts which path was touched, not just the return value."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.saved = {
+            "INI_PATH": panel.INI_PATH,
+            "SLOT_CONFIG_DIR": panel.SLOT_CONFIG_DIR,
+            "get_active_world": panel.get_active_world,
+            "list_slots": panel.list_slots,
+            "_chown_steam": panel._chown_steam,
+        }
+        panel.INI_PATH = os.path.join(self.dir, "live.ini")
+        panel.SLOT_CONFIG_DIR = os.path.join(self.dir, "slots")
+        os.makedirs(panel.SLOT_CONFIG_DIR, exist_ok=True)
+        panel._chown_steam = lambda *a, **k: None
+        panel.get_active_world = lambda: "ACTIVE1"
+        panel.list_slots = lambda: {
+            "slots": [{"guid": "ACTIVE1"}, {"guid": "OTHER2"}, {"guid": "FRESH3"}]
+        }
+        with open(panel.INI_PATH, "w", encoding="utf-8") as f:
+            f.write("[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ExpRate=1.000000,Difficulty=None)\n")
+
+    def tearDown(self):
+        panel.INI_PATH = self.saved["INI_PATH"]
+        panel.SLOT_CONFIG_DIR = self.saved["SLOT_CONFIG_DIR"]
+        panel.get_active_world = self.saved["get_active_world"]
+        panel.list_slots = self.saved["list_slots"]
+        panel._chown_steam = self.saved["_chown_steam"]
+
+    def live(self):
+        with open(panel.INI_PATH, encoding="utf-8") as f:
+            return f.read()
+
+    def stored(self, guid):
+        p = panel._slot_config_path(guid)
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+
+    # --- reads
+
+    def test_active_slot_reads_the_live_file(self):
+        r = panel.read_slot_config("ACTIVE1")
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["active"])
+        self.assertEqual(r["path"], panel.INI_PATH)
+        self.assertEqual(r["options"]["ExpRate"], "1.000000")
+
+    def test_slot_with_no_stored_config_says_so(self):
+        # Not an error, and not "all defaults" — it will inherit on activation.
+        r = panel.read_slot_config("FRESH3")
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["stored"])
+        self.assertEqual(r["options"], {})
+
+    def test_unknown_slot_is_not_found(self):
+        r = panel.read_slot_config("NOPE")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "not_found")
+
+    def test_invalid_guid_is_rejected(self):
+        for bad in ("../etc", "a/b", ""):
+            r = panel.read_slot_config(bad)
+            self.assertFalse(r["ok"], bad)
+            self.assertEqual(r["reason"], "validation", bad)
+
+    # --- writes
+
+    def test_writing_the_active_slot_updates_the_live_file(self):
+        r = panel.write_slot_config("ACTIVE1", options={"ExpRate": "3.000000"})
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["applied_live"])
+        self.assertIn("ExpRate=3.000000", self.live())
+        # and keeps the stored snapshot in step, so a later activate() can't
+        # resurrect the old value
+        self.assertIn("ExpRate=3.000000", self.stored("ACTIVE1") or "")
+
+    def test_writing_another_slot_leaves_the_live_file_alone(self):
+        before = self.live()
+        r = panel.write_slot_config("OTHER2", options={"ExpRate": "5.000000"})
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["applied_live"])
+        self.assertEqual(self.live(), before)
+        self.assertIn("ExpRate=5.000000", self.stored("OTHER2") or "")
+
+    def test_first_write_to_a_bare_slot_starts_from_the_live_config(self):
+        # Otherwise the slot would store a fragment holding only the edited key,
+        # and activating it would drop every other setting.
+        panel.write_slot_config("FRESH3", options={"ExpRate": "2.000000"})
+        stored = self.stored("FRESH3") or ""
+        self.assertIn("ExpRate=2.000000", stored)
+        self.assertIn("Difficulty=None", stored)
+
+    def test_raw_write_replaces_the_whole_file(self):
+        panel.write_slot_config("OTHER2", raw="[/Script/Pal.PalGameWorldSettings]\nOptionSettings=(ExpRate=9.000000)\n")
+        self.assertIn("ExpRate=9.000000", self.stored("OTHER2") or "")
+
+    def test_write_needs_something_to_write(self):
+        r = panel.write_slot_config("OTHER2")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "validation")
+
+    def test_write_to_unknown_slot_is_not_found(self):
+        r = panel.write_slot_config("NOPE", options={"ExpRate": "2.000000"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "not_found")
 if __name__ == "__main__":
     unittest.main()

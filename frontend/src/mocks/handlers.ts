@@ -234,6 +234,43 @@ export async function handle(ctx: Ctx): Promise<Response> {
     if (b.raw) fx.config.raw = b.raw;
     return json({ saved: true, restarted: query.get("restart") === "true" });
   }
+  // Per-slot settings. Active slot reads/writes the live config; any other slot
+  // reads/writes its own stored copy, and `stored:false` means it has none yet.
+  const SLOT_CFG_PREFIX = "/api/config/slot/";
+  if (path.startsWith(SLOT_CFG_PREFIX) && !path.slice(SLOT_CFG_PREFIX.length).includes("/")) {
+    const guid = decodeURIComponent(path.slice(SLOT_CFG_PREFIX.length));
+    const known = fx.saves.slots.some((x: any) => x.guid === guid);
+    if (!known) return json({ ok: false, error: "slot not found" }, 404);
+    const isActive = guid === fx.saves.active;
+    fx.slotConfigs = fx.slotConfigs || {};
+    if (method === "GET") {
+      if (isActive) {
+        return json({ ok: true, error: null, guid, active: true, stored: true,
+          raw: fx.config.raw, options: { ...fx.config.options }, path: fx.config.path });
+      }
+      const stored = fx.slotConfigs[guid];
+      return json({ ok: true, error: null, guid, active: false, stored: !!stored,
+        raw: stored ? stored.raw : "", options: stored ? { ...stored.options } : {},
+        path: `/slot-configs/${guid}.ini` });
+    }
+    if (method === "POST") {
+      const b = await readJson(ctx.body);
+      if (!b.raw && !b.options) return json({ ok: false, error: "provide 'raw' or 'options'" }, 400);
+      if (isActive) {
+        if (b.options) Object.assign(fx.config.options, b.options);
+        if (b.raw) fx.config.raw = b.raw;
+        return json({ ok: true, error: null, guid, active: true, saved: true, applied_live: true,
+          ...(query.get("restart") === "true" ? { restarted: true } : {}) });
+      }
+      // First write to a bare slot inherits the live config, so activating it
+      // later can't drop every unedited setting.
+      const base = fx.slotConfigs[guid] || { raw: fx.config.raw, options: { ...fx.config.options } };
+      if (b.options) Object.assign(base.options, b.options);
+      if (b.raw) base.raw = b.raw;
+      fx.slotConfigs[guid] = base;
+      return json({ ok: true, error: null, guid, active: false, saved: true, applied_live: false });
+    }
+  }
   if (path === "/api/config/reset" && method === "POST") {
     return json({ ok: true, error: null, reset: true, raw: fx.config.raw, options: { ...fx.config.options }, path: fx.config.path });
   }

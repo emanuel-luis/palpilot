@@ -14,6 +14,7 @@ import { confirm, prompt } from "./ui/Confirm";
 import { t } from "@/i18n/en";
 import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { navigate } from "@/hooks/useHashRoute";
 
 const ARCHIVE_RE = /\.(zip|tgz|tar\.gz)$/i;
 const PART_RETRIES = 3;
@@ -344,6 +345,17 @@ export function SavesSection() {
                         </div>
                       </div>
                       <div className="row-tight">
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => navigate(`/settings/${encodeURIComponent(s.guid)}`)}
+                          title={
+                            isActive
+                              ? "Edit this world's settings (it is the running one)"
+                              : "Edit this world's own settings — applied when you activate it"
+                          }
+                        >
+                          {t("settings.title")}
+                        </button>
                         <button
                           className="btn btn-sm"
                           onClick={() => setOpenGuid(open ? null : s.guid)}
