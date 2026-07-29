@@ -32,6 +32,7 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 - **Unified console** — a single overview: server power state, players, uptime, in-game day, plus every server action.
 - **Save slots** — create, switch, clone, rename, delete; the active world is switched safely (stop → backup → switch → restart).
 - **Per-save settings & mods** — each save keeps its own `PalWorldSettings.ini` and mod set; they travel with the save when you clone or switch.
+- **Game updates & version pinning** — the server follows Palworld's Steam releases automatically (on by default, applied on boot, on a save switch, and on an interval, never with players connected). Any save can instead be **pinned** to a build, so a playthrough keeps running on the version it was built for; the pin travels with the save through clone, restore and activation.
 - **Backups & restore** — per-slot backups to the VM disk **and** Google Cloud Storage, with retention pruning and one-click restore.
 - **Import & export worlds** — download any slot as a `.tar.gz`, and upload a world back (that `.tar.gz` or a `.zip` of a world folder) as a new slot; large files upload in chunks.
 - **Mods** — install `.pak` / LogicMods natively; UE4SS script mods are supported via an optional Proton runtime.

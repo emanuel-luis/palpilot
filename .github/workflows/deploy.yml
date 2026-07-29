@@ -138,7 +138,7 @@ jobs:
       - name: Validate panel (py_compile + parser/metrics/log tests)
         run: |
           python3 -m py_compile panel/panel.py panel/idle_watchdog.py
-          (cd panel && python3 -m unittest -q tests.test_ini tests.test_metrics_logs)
+          (cd panel && python3 -m unittest -q tests.test_ini tests.test_metrics_logs tests.test_update)
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)

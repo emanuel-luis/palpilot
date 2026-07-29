@@ -11,6 +11,7 @@ import { SavesSection } from "@/components/SavesSection";
 import { ModsSection } from "@/components/ModsSection";
 import { CommandsSection } from "@/components/CommandsSection";
 import { WatchdogSection } from "@/components/WatchdogSection";
+import { UpdatesSection } from "@/components/UpdatesSection";
 
 function useServerState() {
   const q = useOverview();
@@ -74,6 +75,21 @@ export function ModsPage() {
         description="Native .pak and LogicMods always work. Script mods need the Proton runtime, which is an infrastructure setting."
       />
       {online ? <ModsSection /> : <OfflineNotice action="manage mods" />}
+    </>
+  );
+}
+
+export function UpdatesPage() {
+  const { online } = useServerState();
+  return (
+    <>
+      <PageHeader
+        title="Game version"
+        description="Which Palworld build this server runs. Auto-update follows Steam; a save can be pinned to a build so a playthrough keeps working after an upstream release."
+      />
+      {/* The version state lives on the VM (Steam's own records), so it reads
+          like any other proxied page: nothing to show while the VM is off. */}
+      {online ? <UpdatesSection /> : <OfflineNotice action="manage the game version" />}
     </>
   );
 }

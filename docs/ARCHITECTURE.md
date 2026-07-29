@@ -154,7 +154,39 @@ flowchart TB
 
 **Activate a slot:** stop → back up current world → snapshot current settings to the outgoing slot → switch the
 pointer → apply the target slot's settings → re-assert REST/admin keys (so the panel↔game link never breaks) →
-start. Clone copies the settings with the world; delete removes them.
+reconcile the game build the incoming save wants → start. Clone copies the settings, the mods **and** the version
+pin with the world; delete removes them.
+
+---
+
+## 4b. Game version (auto-update + per-save pinning)
+
+The game binaries only ever changed when `steamcmd` ran, and it only ran when the data disk had no PalServer on it —
+so a long-lived VM silently fell behind upstream releases. The agent now owns the version:
+
+- **Policy** (`palworld-update.json`, on the data disk): `auto_update` — on by default.
+- **Wanted build per save** (in the slot metadata): `latest` (default) or `pinned` to a buildid.
+- **Reconcile** — install whatever the *active* save wants. Runs at boot (`panel.py game-sync`, before the game
+  starts, plus the panel's own start-up pass), on a save switch/restore, on an interval (`UPDATE_CHECK_SECONDS`),
+  and on demand from the console. Declines while players are connected unless forced, because installing means
+  stopping the game; the active world is backed up first (`pre-update`).
+
+```mermaid
+flowchart LR
+    P["active save's<br/>wanted build"] --> R{"same as<br/>installed?"}
+    S["Steam public buildid<br/>(app_info_print)"] --> P
+    R -->|yes| N["nothing to do"]
+    R -->|no| G{"players<br/>online?"}
+    G -->|yes| W["defer (pending)"]
+    G -->|no| I["stop → backup → install → start"]
+```
+
+**Why pinning is limited to observed builds.** `steamcmd` installs either the current public build (`app_update`) or
+an exact set of depot manifests (`download_depot`); Steam does not serve manifest ids for old builds. So the agent
+records each build's manifests whenever it sees them (every check, every install, plus the installed build is always
+readable from `appmanifest_<app>.acf`) and only those builds can be pinned/reinstalled — pinning "the build running
+right now", the freeze-this-playthrough case, therefore always works. A pinned install writes files without
+updating Steam's `.acf`, so the agent keeps its own `installed` marker as the authority.
 
 ---
 

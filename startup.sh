@@ -386,6 +386,32 @@ visudo -cf /etc/sudoers.d/palworld-panel
 
 systemctl daemon-reload
 systemctl enable palworld palworld-panel palworld-watchdog
+
+
+# ---------------------------------------------------------------------------
+# Game version reconcile (BEFORE the game starts).
+#
+# The Palworld install above is create-only: once PalServer is on the data disk
+# it is never touched again, so a long-lived VM silently falls behind upstream
+# releases. panel.py owns the version policy now (auto-update on by default,
+# per-save pinning) and `game-sync` applies it: install whatever build the
+# ACTIVE save wants, synchronously, while nothing is running. As the steam user
+# -- steamcmd must not run as root.
+#
+# Never fatal: a Steam outage must not stop this boot. panel.py also reconciles
+# from its own start-up thread, so a skip here is retried in-service.
+# ---------------------------------------------------------------------------
+echo "Reconciling the Palworld game version (auto-update / per-save pin)"
+runuser -u steam -- env \
+    STEAM_DIR=/home/steam/Steam \
+    RUNTIME_MODE="$RUNTIME_MODE" \
+    INI_PATH="$INI_PATH" \
+    REST_PORT="$REST_API_PORT" \
+    ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+    SERVICE_NAME=palworld \
+    python3 "$PANEL_DIR/panel.py" game-sync boot || \
+    echo "WARNING: game-sync failed; keeping the installed build"
+
 systemctl restart palworld palworld-panel palworld-watchdog
 
 

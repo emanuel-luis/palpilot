@@ -4,6 +4,8 @@ export type Slot = {
   guid: string; name: string; created: number; active: boolean;
   size: number; empty: boolean; last_backup: number | null;
   pending?: boolean;
+  /** Absent = follows the latest public build. */
+  version?: { mode: "latest" | "pinned"; buildid: string | null; pinned_at?: string };
 };
 export type Backup = {
   ref: string; file: string; size: number; created: number;
@@ -42,9 +44,23 @@ function seed() {
       active: "world-a",
       slots: [
         { guid: "world-a", name: "Season 2 — main", created: now - 86400 * 45, active: true, size: 512_034_112, empty: false, last_backup: now - 3600 * 5 },
-        { guid: "world-b", name: "Sandbox testing", created: now - 86400 * 12, active: false, size: 218_912_000, empty: false, last_backup: now - 86400 },
+        { guid: "world-b", name: "Sandbox testing", created: now - 86400 * 12, active: false, size: 218_912_000, empty: false, last_backup: now - 86400, version: { mode: "pinned", buildid: "17400001" } },
         { guid: "world-c", name: "Fresh start", created: now - 86400 * 2, active: false, size: 0, empty: true, last_backup: null },
       ] as Slot[],
+    },
+    // Game version state: installed build behind the public one, so the mock
+    // console shows the "update available" path by default.
+    update: {
+      app_id: "2394010",
+      installed: { buildid: "17400001", updated: "2026-07-02_09-14-00", method: "latest" as string | null, depots: { "2394011": "88179197623389" } },
+      latest: { buildid: "17615519", checked: "2026-07-29_08-00-00", error: null as string | null },
+      policy: { auto_update: true },
+      builds: [
+        { buildid: "17615519", first_seen: "2026-07-29_08-00-00", source: "appinfo", depots: 1 },
+        { buildid: "17400001", first_seen: "2026-07-02_09-14-00", source: "installed", depots: 1 },
+      ],
+      job: { state: "idle" as string, phase: "", target: null as string | null, reason: "", started: null as string | null, finished: null as string | null, error: null as string | null, log: "" },
+      last_run: null as any,
     },
     backups: {
       "world-a": [

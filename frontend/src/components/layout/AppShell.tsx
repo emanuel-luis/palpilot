@@ -7,7 +7,7 @@
 // a control you can never use is noise, not information.
 import { useEffect, useMemo, useState } from "react";
 import {
-  Activity, Archive, ClipboardList, Gauge, HardDriveDownload, Menu, Moon, Save,
+  Activity, Archive, ClipboardList, Gauge, HardDriveDownload, Menu, Moon, PackageCheck, Save,
   LogOut, ScrollText, Settings2, ShieldCheck, Sun, Terminal, UserRound, Users, X,
 } from "lucide-react";
 import { session, useSession } from "@/stores/session";
@@ -46,6 +46,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "saves", route: "/saves", label: "Saves", icon: Save, perms: ["view"] },
       { id: "settings", route: "/settings", label: "Server settings", icon: Settings2, perms: ["view"] },
       { id: "mods", route: "/mods", label: "Mods", icon: HardDriveDownload, perms: ["view"] },
+      { id: "updates", route: "/updates", label: "Game version", icon: PackageCheck, perms: ["view"] },
       { id: "watchdog", route: "/watchdog", label: "Auto shutdown", icon: Archive, perms: ["view"] },
     ],
   },

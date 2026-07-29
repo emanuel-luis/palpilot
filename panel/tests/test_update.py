@@ -1,0 +1,323 @@
+"""Game version / auto-update logic.
+
+The parsing here is the risky part: two flavours of Steam KeyValues text
+(`app_info_print` output for what upstream serves, `appmanifest_<app>.acf` for
+what is installed), plus the rules that turn those two into "what should this
+save be running". steamcmd itself is never invoked -- every test either parses a
+fixture or drives the pure metadata helpers against temp files.
+"""
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import panel  # noqa: E402
+
+
+# Trimmed `steamcmd +app_info_print 2394010`, including the console chatter it
+# wraps the tree in and the `branches` block nested INSIDE `depots`.
+APPINFO = """
+Redirecting stderr to '/home/steam/Steam/logs/stderr.txt'
+AppID : 2394010, change number : 28461925/0, last change :
+"2394010"
+{
+        "common"
+        {
+                "name"          "Palworld Dedicated Server"
+                "type"          "Tool"
+        }
+        "depots"
+        {
+                "2394011"
+                {
+                        "name"          "Palworld Dedicated Server Linux"
+                        "manifests"
+                        {
+                                "public"
+                                {
+                                        "gid"           "8817919762338900001"
+                                        "size"          "9000000000"
+                                }
+                        }
+                }
+                "2394012"
+                {
+                        "manifests"
+                        {
+                                "public"
+                                {
+                                        "gid"           "1122334455667788990"
+                                }
+                        }
+                }
+                "branches"
+                {
+                        "public"
+                        {
+                                "buildid"               "17615519"
+                                "timeupdated"           "1753000000"
+                        }
+                        "beta"
+                        {
+                                "buildid"               "17700000"
+                                "pwdrequired"           "1"
+                        }
+                }
+        }
+}
+"""
+
+# Older appinfo shape: the public manifest gid is the value, not a sub-block.
+APPINFO_FLAT_GID = """
+"2394010"
+{
+        "depots"
+        {
+                "2394011"
+                {
+                        "manifests"
+                        {
+                                "public"        "999888777"
+                        }
+                }
+                "branches"
+                {
+                        "public"
+                        {
+                                "buildid"       "17000000"
+                        }
+                }
+        }
+}
+"""
+
+ACF = """"AppState"
+{
+        "appid"         "2394010"
+        "Universe"      "1"
+        "buildid"       "17615519"
+        "LastUpdated"  "1753000123"
+        "InstalledDepots"
+        {
+                "2394011"
+                {
+                        "manifest"      "8817919762338900001"
+                        "size"          "9000000000"
+                }
+                "2394012"
+                {
+                        "manifest"      "1122334455667788990"
+                }
+        }
+}
+"""
+
+
+class VdfParse(unittest.TestCase):
+    def test_nested_blocks_and_values(self):
+        tree = panel._parse_vdf(APPINFO)
+        self.assertEqual(tree["2394010"]["common"]["name"], "Palworld Dedicated Server")
+        self.assertEqual(
+            tree["2394010"]["depots"]["branches"]["public"]["buildid"], "17615519"
+        )
+
+    def test_unbalanced_tail_is_not_fatal(self):
+        # Truncated steamcmd output must yield what parsed, never raise.
+        tree = panel._parse_vdf('"a"\n{\n"b" "1"\n')
+        self.assertEqual(tree["a"]["b"], "1")
+
+    def test_public_branch_buildid_and_manifests(self):
+        info = panel._depots_from_appinfo(panel._parse_vdf(APPINFO))
+        self.assertEqual(info["buildid"], "17615519")  # public, NOT the beta build
+        self.assertEqual(
+            info["depots"], {"2394011": "8817919762338900001", "2394012": "1122334455667788990"}
+        )
+
+    def test_flat_manifest_gid_shape(self):
+        info = panel._depots_from_appinfo(panel._parse_vdf(APPINFO_FLAT_GID))
+        self.assertEqual(info["buildid"], "17000000")
+        self.assertEqual(info["depots"], {"2394011": "999888777"})
+
+    def test_missing_buildid_yields_none(self):
+        info = panel._depots_from_appinfo(panel._parse_vdf('"2394010"\n{\n}\n'))
+        self.assertIsNone(info["buildid"])
+        self.assertEqual(info["depots"], {})
+
+
+class VersionState(unittest.TestCase):
+    """installed/latest/pin resolution, all against temp sidecar files."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved = {
+            k: getattr(panel, k)
+            for k in ("UPDATE_META", "APPMANIFEST", "SLOTS_META", "SAVEGAMES_DIR", "GUS_PATH")
+        }
+        panel.UPDATE_META = os.path.join(self.tmp, "palworld-update.json")
+        panel.APPMANIFEST = os.path.join(self.tmp, "appmanifest_2394010.acf")
+        panel.SLOTS_META = os.path.join(self.tmp, "palworld-slots.json")
+        panel.SAVEGAMES_DIR = os.path.join(self.tmp, "SaveGames", "0")
+        panel.GUS_PATH = os.path.join(self.tmp, "GameUserSettings.ini")
+        # Ownership fixups need POSIX (`pwd`); irrelevant to this logic and the
+        # suite stays runnable off-Linux.
+        self._chown = panel._chown_steam
+        panel._chown_steam = lambda *a, **k: None
+        os.makedirs(os.path.join(panel.SAVEGAMES_DIR, "WORLD1"))
+        with open(panel.APPMANIFEST, "w", encoding="utf-8") as f:
+            f.write(ACF)
+        panel.set_active_world("WORLD1")
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(panel, k, v)
+        panel._chown_steam = self._chown
+
+    def test_appmanifest_is_the_installed_build(self):
+        inst = panel.installed_version()
+        self.assertEqual(inst["buildid"], "17615519")
+        self.assertEqual(inst["depots"]["2394011"], "8817919762338900001")
+        self.assertEqual(inst["method"], "latest")
+
+    def test_pinned_marker_wins_over_appmanifest(self):
+        # download_depot doesn't rewrite the .acf, so the marker is the truth
+        # after a pinned install -- otherwise we'd report the build we left.
+        panel._mark_installed("17000000", {"2394011": "999888777"}, "pinned")
+        self.assertEqual(panel.installed_version()["buildid"], "17000000")
+
+    def test_auto_update_defaults_on(self):
+        self.assertTrue(panel.update_policy()["auto_update"])
+
+    def test_policy_persists(self):
+        panel.set_update_policy(False)
+        self.assertFalse(panel.update_policy()["auto_update"])
+        panel.set_update_policy(True)
+        self.assertTrue(panel.update_policy()["auto_update"])
+
+    def test_slot_defaults_to_latest(self):
+        self.assertEqual(panel.slot_version("WORLD1")["mode"], "latest")
+
+    def test_pin_without_buildid_pins_the_installed_build(self):
+        r = panel.set_slot_version("WORLD1", "pinned")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["buildid"], "17615519")
+        self.assertEqual(panel.slot_version("WORLD1")["mode"], "pinned")
+
+    def test_pin_to_an_unobserved_build_is_refused(self):
+        r = panel.set_slot_version("WORLD1", "pinned", "12345678")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "conflict")  # no manifests -> not installable
+
+    def test_pin_to_a_recorded_build_is_allowed(self):
+        meta = panel._load_update_meta()
+        panel._record_build(meta, "17000000", {"2394011": "999888777"}, "appinfo")
+        panel._save_update_meta(meta)
+        r = panel.set_slot_version("WORLD1", "pinned", "17000000")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(panel.resolve_target("WORLD1")["buildid"], "17000000")
+
+    def test_unpin_returns_to_latest(self):
+        panel.set_slot_version("WORLD1", "pinned")
+        r = panel.set_slot_version("WORLD1", "latest")
+        self.assertTrue(r["ok"])
+        self.assertIsNone(r["buildid"])
+        self.assertNotIn("version", panel._load_slots_meta()["WORLD1"])
+
+    def test_pin_on_unknown_slot_is_404_shaped(self):
+        r = panel.set_slot_version("NOPE", "pinned")
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "not_found")
+
+    def test_invalid_guid_and_mode_rejected(self):
+        self.assertEqual(panel.set_slot_version("../etc", "latest")["reason"], "validation")
+        self.assertEqual(panel.set_slot_version("WORLD1", "sideways")["reason"], "validation")
+
+    def test_target_follows_cached_latest_when_unpinned(self):
+        meta = panel._load_update_meta()
+        meta["latest"] = {"buildid": "17700001", "depots": {}, "checked": "x"}
+        panel._save_update_meta(meta)
+        self.assertEqual(panel.resolve_target("WORLD1"), {
+            "mode": "latest", "buildid": "17700001", "guid": "WORLD1",
+        })
+
+    def test_pin_travels_with_a_clone(self):
+        panel.set_slot_version("WORLD1", "pinned")
+        r = panel.clone_slot("WORLD1", "frozen copy")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(panel.slot_version(r["guid"])["buildid"], "17615519")
+
+    def test_history_keeps_pinned_builds_when_pruning(self):
+        panel.set_slot_version("WORLD1", "pinned")  # pins 17615519
+        saved_keep = panel.UPDATE_HISTORY_KEEP
+        panel.UPDATE_HISTORY_KEEP = 3
+        try:
+            meta = panel._load_update_meta()
+            panel._record_build(meta, "17615519", {"2394011": "a"}, "installed")
+            for i in range(6):
+                panel._record_build(meta, f"1800000{i}", {"2394011": f"m{i}"}, "appinfo")
+            panel._save_update_meta(meta)
+        finally:
+            panel.UPDATE_HISTORY_KEEP = saved_keep
+        builds = {b["buildid"] for b in panel.known_builds()}
+        self.assertIn("17615519", builds)  # the pinned build survives pruning
+
+    def test_status_payload_shape(self):
+        # No steamcmd anywhere: latest is read from the cache, absent here.
+        st = panel.version_status()
+        self.assertEqual(st["installed"]["buildid"], "17615519")
+        self.assertEqual(st["active"]["guid"], "WORLD1")
+        self.assertEqual(st["job"]["state"], "idle")
+        self.assertIn("builds", st)
+
+    def test_reconcile_declines_without_a_known_target(self):
+        r = panel.reconcile_version(reason="test", blocking=True)
+        self.assertEqual(r["skipped"], "unknown_target")
+
+    def test_reconcile_is_a_noop_when_already_on_target(self):
+        meta = panel._load_update_meta()
+        meta["latest"] = {"buildid": "17615519", "depots": {}, "checked": "x"}
+        panel._save_update_meta(meta)
+        r = panel.reconcile_version(reason="test", blocking=True)
+        self.assertTrue(r["up_to_date"])
+        self.assertFalse(r["changed"])
+
+    def test_reconcile_respects_auto_update_off(self):
+        meta = panel._load_update_meta()
+        meta["latest"] = {"buildid": "99999999", "depots": {"2394011": "z"}, "checked": "x"}
+        panel._save_update_meta(meta)
+        panel.set_update_policy(False)
+        r = panel.reconcile_version(reason="test", blocking=True)
+        self.assertEqual(r["skipped"], "auto_update_off")
+
+    def test_pinned_target_ignores_auto_update_off(self):
+        # An explicit pin is an instruction, not a subscription: turning
+        # auto-update off must not strand a save on the wrong build.
+        meta = panel._load_update_meta()
+        panel._record_build(meta, "17000000", {"2394011": "999888777"}, "appinfo")
+        panel._save_update_meta(meta)
+        panel.set_slot_version("WORLD1", "pinned", "17000000")
+        panel.set_update_policy(False)
+        calls = []
+        saved = panel.apply_update
+        panel.apply_update = lambda **kw: (calls.append(kw), {"ok": True, "changed": True})[1]
+        try:
+            r = panel.reconcile_version(reason="test", blocking=True)
+        finally:
+            panel.apply_update = saved
+        self.assertTrue(r["changed"])
+        self.assertEqual(calls[0]["target"], "17000000")
+
+    def test_meta_survives_a_corrupt_file(self):
+        with open(panel.UPDATE_META, "w", encoding="utf-8") as f:
+            f.write("{not json")
+        self.assertTrue(panel.update_policy()["auto_update"])
+        panel.set_update_policy(True)
+        with open(panel.UPDATE_META, "r", encoding="utf-8") as f:
+            self.assertIsInstance(json.load(f), dict)
+
+
+if __name__ == "__main__":
+    unittest.main()
