@@ -29,8 +29,10 @@ resource "google_storage_bucket_object" "panel_watchdog" {
   bucket = google_storage_bucket.palworld_panel.name
   source = "${path.module}/panel/idle_watchdog.py"
 
+  # Create-once, like the other panel objects in main.tf (see the note there):
+  # CI owns the content from then on.
   lifecycle {
-    ignore_changes = [source, detect_md5hash]
+    ignore_changes = all
   }
 }
 
@@ -383,6 +385,10 @@ resource "google_monitoring_uptime_check_config" "coordinator" {
     type = "uptime_url"
     labels = {
       host = replace(replace(google_cloud_run_v2_service.coordinator.uri, "https://", ""), "/", "")
+      # Set explicitly: the API fills project_id in anyway, so leaving it out of
+      # the config made every plan want to remove it -- and this block is
+      # ForceNew, so that read as "replace the check" forever.
+      project_id = var.project_id
     }
   }
 
@@ -397,8 +403,22 @@ resource "google_monitoring_alert_policy" "coordinator_down" {
   conditions {
     display_name = "Coordinator HTTPS uptime check failed"
 
+    # Matched on the monitored HOST, not on the check's generated id.
+    #
+    # `metric.label.check_id` looks like the natural key, but it makes this
+    # policy an "associated alert policy" of that specific check, and Cloud
+    # Monitoring then refuses to delete the check ("please ensure all associated
+    # Alert Policies are deleted"). Since the check's host label is ForceNew, any
+    # coordinator URL change replaces the check -- and the destroy deadlocked
+    # against this very policy, breaking a plain `terraform apply`.
+    # create_before_destroy doesn't help: forcing it here cascades into the
+    # function/source nodes and Terraform reports a graph cycle.
+    #
+    # Filtering by host keeps the alert semantics identical (this is the only
+    # uptime check on that host, and the aggregation below already groups by
+    # resource.label.host) while leaving the check free to be replaced.
     condition_threshold {
-      filter          = "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.check_id=\"${google_monitoring_uptime_check_config.coordinator[0].uptime_check_id}\""
+      filter          = "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.label.host=\"${replace(replace(google_cloud_run_v2_service.coordinator.uri, "https://", ""), "/", "")}\""
       comparison      = "COMPARISON_LT"
       threshold_value = 1
       duration        = "0s"
