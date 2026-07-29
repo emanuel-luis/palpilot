@@ -115,6 +115,13 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   to the last good offset. Archives are extracted member-by-member with traversal/symlink rejection and an
   uncompressed-size cap (`SAVE_MAX_BYTES`) — never `tar xzf` on untrusted input. An import always lands as a
   NEW slot; it never overwrites a world.
+- **steamcmd lies about failure, and its first run is flaky.** `+app_update` exits **0** on a failed update and only
+  says so in its output: `Error! App '2394010' state is 0x6 after update job.` (0x6 = UpdateRequired|FullyInstalled,
+  i.e. "an update is due and I didn't apply it"). It also commonly fails on the first invocation after it
+  self-updates and re-execs — which is why `startup.sh` retries the initial install 5×. So an install is only
+  successful if the appmanifest's buildid actually became the wanted build AND no `state is 0x…` line was printed;
+  `_install_latest()` verifies both and retries `UPDATE_ATTEMPTS` times. A live server shipped stale precisely
+  because the first version of that function only checked "an appmanifest exists" and reported `ok: true`.
 - **Game version is agent-owned:** policy + observed-build history live in `palworld-update.json` on the data disk,
   the wanted build per save lives in the slot metadata (`version: {mode, buildid}`), and `reconcile_version()` is the
   single entry point (boot via `panel.py game-sync`, panel start-up thread, save activate/restore, interval, or

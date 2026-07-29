@@ -2856,14 +2856,93 @@ def _players_online() -> int:
     return len(players) if isinstance(players, list) else -1
 
 
+# steamcmd reports a failed update in its OUTPUT, not its exit code:
+#   Error! App '2394010' state is 0x6 after update job.
+# 0x6 is UpdateRequired|FullyInstalled -- "an update is due and I did not apply
+# it". Parsing this is the only way to tell a real update from a no-op.
+_STEAM_STATE_RE = re.compile(r"Error!\s+App\s+'?\d+'?\s+state is (0x[0-9a-fA-F]+)")
+# Steam writes the new files alongside the old ones before swapping, so an
+# in-place update needs headroom on top of the installed size.
+UPDATE_FREE_MARGIN = float(os.environ.get("UPDATE_FREE_MARGIN", "0.35"))
+UPDATE_ATTEMPTS = int(os.environ.get("UPDATE_ATTEMPTS", "3"))
+
+
+def _install_size() -> int:
+    return _dir_size(os.path.join(STEAM_DIR, "Pal")) or 10 * 1024**3
+
+
+def _free_bytes() -> int:
+    try:
+        return shutil.disk_usage(STEAM_DIR).free
+    except OSError:
+        return -1
+
+
 def _install_latest() -> dict:
-    r = _run_steamcmd(["+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT)
-    log = ((r.stdout or "") + (r.stderr or ""))[-4000:]
-    acf = _read_appmanifest()
-    if not acf.get("buildid"):
-        return {"ok": False, "reason": "conflict", "error": "app_update left no appmanifest", "log": log}
-    _mark_installed(acf["buildid"], acf.get("depots") or {}, "latest")
-    return {"ok": True, "error": None, "buildid": acf["buildid"], "log": log}
+    """Move to the current public build, and VERIFY it moved.
+
+    Everything here is about not lying: steamcmd exits 0 on a failed update, so
+    success means the appmanifest's buildid actually changed to what Steam is
+    serving and no `state is 0x...` error was printed. The first version of this
+    function only checked that an appmanifest existed, so a server that failed to
+    update reported `{"ok": true, "changed": true}` while sitting on the old
+    build -- which is exactly how a stale server went unnoticed."""
+    before = _read_appmanifest().get("buildid")
+    want = (latest_version().get("buildid") or "") or None
+
+    need = _install_size()
+    free = _free_bytes()
+    if free >= 0 and free < need * UPDATE_FREE_MARGIN:
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "error": (
+                f"not enough free space to update: {free // 1024**2} MiB free, "
+                f"~{int(need * UPDATE_FREE_MARGIN) // 1024**2} MiB of headroom needed "
+                f"for a ~{need // 1024**2} MiB install. Prune backups or grow the data disk."
+            ),
+            "free_bytes": free,
+        }
+
+    # steamcmd is flaky on a cold run (it self-updates first and can bail with
+    # "Missing configuration"), which is why startup.sh retries the install too.
+    log = ""
+    state = None
+    acf = {}
+    for attempt in range(1, UPDATE_ATTEMPTS + 1):
+        _job_set(phase=f"installing (steamcmd attempt {attempt})")
+        r = _run_steamcmd(["+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT)
+        log = ((r.stdout or "") + (r.stderr or ""))[-4000:]
+        m = _STEAM_STATE_RE.search(log)
+        state = m.group(1) if m else None
+        acf = _read_appmanifest()
+        if not state and acf.get("buildid") and (want is None or acf["buildid"] == want):
+            _mark_installed(acf["buildid"], acf.get("depots") or {}, "latest")
+            return {
+                "ok": True,
+                "error": None,
+                "buildid": acf["buildid"],
+                "previous": before,
+                "attempts": attempt,
+                "log": log,
+            }
+        time.sleep(5)
+
+    detail = f"steamcmd reported state {state}" if state else "steamcmd made no progress"
+    if acf.get("buildid") and want and acf["buildid"] != want:
+        detail += f"; still on build {acf['buildid']}, wanted {want}"
+    return {
+        "ok": False,
+        "reason": "conflict",
+        "error": (
+            f"update to build {want or 'latest'} failed after {UPDATE_ATTEMPTS} attempts: "
+            f"{detail}. Free space: {free // 1024**2 if free >= 0 else '?'} MiB."
+        ),
+        "buildid": acf.get("buildid") or before,
+        "state": state,
+        "free_bytes": free,
+        "log": log,
+    }
 
 
 def _depot_content_dirs(depot: str) -> list:
@@ -2888,10 +2967,9 @@ def _install_pinned(buildid: str) -> dict:
     # before we move it into place, so a pinned install briefly needs about
     # twice the install size. The data disk is 40GB against a ~10GB game: refuse
     # up front rather than fill the disk the worlds live on.
-    need = _dir_size(os.path.join(STEAM_DIR, "Pal")) or 10 * 1024**3
-    try:
-        free = shutil.disk_usage(STEAM_DIR).free
-    except OSError:
+    need = _install_size()
+    free = _free_bytes()
+    if free < 0:
         free = need * 2  # can't tell; don't invent a failure
     if free < need * 11 // 10:
         return {
@@ -3156,6 +3234,9 @@ def version_status() -> dict:
         "builds": known_builds(),
         "job": update_job(),
         "last_run": _load_update_meta().get("last_run"),
+        # Surfaced because a full data disk is the usual reason an update refuses
+        # or fails: Steam stages the new files before swapping them in.
+        "disk": {"free": _free_bytes(), "install": _install_size()},
     }
 
 
