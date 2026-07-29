@@ -2788,6 +2788,11 @@ _GUARD_RE = re.compile(
 )
 _BAD_PASSWORD_RE = re.compile(r"Invalid Password|InvalidPassword|password is incorrect", re.IGNORECASE)
 _RATE_LIMIT_RE = re.compile(r"Rate Limit Exceeded|RateLimitExceeded", re.IGNORECASE)
+_PUSH_WAIT_RE = re.compile(
+    r"confirm the login in the Steam Mobile app|Waiting for confirmation|"
+    r"Timed out waiting for confirmation",
+    re.IGNORECASE,
+)
 
 
 def steam_login(code: str = "") -> dict:
@@ -2818,6 +2823,20 @@ def steam_login(code: str = "") -> dict:
         return {"ok": False, "reason": "conflict", "error": f"steamcmd: {e}"}
     out = _scrub((r.stdout or "") + (r.stderr or ""))
     tail = out[-1200:]
+    # SUCCESS IS CHECKED FIRST, and that ordering is the whole point.
+    #
+    # steamcmd prints "This account is protected by a Steam Guard mobile
+    # authenticator" on the way to a SUCCESSFUL code login too. Classifying the
+    # Steam Guard pattern before success therefore reported a working sign-in as
+    # "that code was not accepted" and never recorded the session -- which is
+    # exactly what happened when the code was submitted through the console.
+    if _LOGIN_OK_RE.search(out):
+        meta = _load_update_meta()
+        meta["steam_login"] = {"user": user, "at": _timestamp()}
+        _save_update_meta(meta)
+        # A licensed session is precisely what the anonymous denial was about.
+        clear_update_cooldown()
+        return {"ok": True, "error": None, "user": user, "logged_in": True}
     if _BAD_PASSWORD_RE.search(out):
         return {"ok": False, "reason": "validation", "error": "Steam rejected the password.", "log": tail}
     if _RATE_LIMIT_RE.search(out):
@@ -2827,14 +2846,31 @@ def steam_login(code: str = "") -> dict:
             "error": "Steam rate-limited the sign-in. Wait a few minutes and try again.",
             "log": tail,
         }
+    # Push approval, not a code: an account with the mobile authenticator gets
+    # "Please confirm the login in the Steam Mobile app", steamcmd waits, and
+    # gives up with ERROR (Timeout) if nobody taps approve. Telling that user to
+    # "submit a code" describes the wrong action, so it gets its own answer.
+    if _PUSH_WAIT_RE.search(out):
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "guard_required": True,
+            "push_required": True,
+            "error": (
+                "Steam sent a login approval to your Steam Mobile app and timed out waiting. "
+                "Open the app, press Sign in here again, and approve the prompt within about a "
+                "minute — or submit a Steam Guard code instead."
+            ),
+            "log": tail,
+        }
     if _GUARD_RE.search(out) and not code:
         return {
             "ok": False,
             "reason": "conflict",
             "guard_required": True,
             "error": (
-                "Steam Guard code required. Check your Steam mobile app or email, then "
-                "submit the code here (it is only needed once for this machine)."
+                "Steam Guard code required. Take the code from your Steam Mobile app "
+                "(Steam Guard) or email and submit it here — once for this machine."
             ),
             "log": tail,
         }
@@ -2846,14 +2882,7 @@ def steam_login(code: str = "") -> dict:
             "error": "Steam did not accept that Steam Guard code. Codes expire quickly — try a fresh one.",
             "log": tail,
         }
-    if not _LOGIN_OK_RE.search(out):
-        return {"ok": False, "reason": "conflict", "error": f"sign-in failed: {tail[-300:]}", "log": tail}
-    meta = _load_update_meta()
-    meta["steam_login"] = {"user": user, "at": _timestamp()}
-    _save_update_meta(meta)
-    # A fresh, licensed session is exactly what the anonymous denial was about.
-    clear_update_cooldown()
-    return {"ok": True, "error": None, "user": user, "logged_in": True}
+    return {"ok": False, "reason": "conflict", "error": f"sign-in failed: {tail[-300:]}", "log": tail}
 
 
 def latest_version(refresh: bool = False) -> dict:
