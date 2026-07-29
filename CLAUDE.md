@@ -24,6 +24,7 @@ panel/                VM-side agent, Python (FastAPI).
   index.html          Static "use the console" page (the agent no longer serves an admin UI).
   tests/test_ini.py   Unit tests for the PalWorldSettings.ini parser (the riskiest logic).
   tests/test_metrics_logs.py    /proc parsers (fixture-driven) + the log reader.
+  tests/test_update.py          Steam VDF/ACF parsing + version policy, pin and reconcile rules.
 main.tf, coordinator.tf, variables.tf, outputs.tf   Terraform (VM, IP, disks, buckets, function, IAM, monitoring).
 startup.sh            VM boot script (provisioning, systemd units, fetches agent code from the bucket).
 scripts/discord_register.py    One-off: registers the guild slash commands from discord_bot.COMMAND_DEFS.
@@ -39,7 +40,7 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
 - **Python:** `python3 -m py_compile coordinator/main.py panel/panel.py panel/idle_watchdog.py`,
   `cd coordinator && python3 -m unittest -q tests.test_static_routes` (run the frontend build first — the asset
   tests need real hashed files), and
-  `cd panel && python3 -m unittest -q tests.test_ini tests.test_metrics_logs`.
+  `cd panel && python3 -m unittest -q tests.test_ini tests.test_metrics_logs tests.test_update`.
   `tests/` has no `__init__.py`, so `unittest discover` can't load it — name modules explicitly.
 - **Terraform:** `terraform fmt -recursive && terraform validate`.
 
@@ -57,8 +58,8 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   (it disconnects players). The persistent data disk survives, the boot disk does not.
   Ordinary `metadata` entries (e.g. `coordinator-url`) ARE in-place and take effect on the next boot — those two
   cases are different, which is easy to conflate.
-- ⚠️ **`startup.sh` is currently DRIFTED from the state**: it changed in `2819148` (2026-07-17) and no apply has
-  run since, so an untargeted `terraform apply` will replace the VM even if you changed nothing. Until that is
+- ⚠️ **`startup.sh` is currently DRIFTED from the state**: it changed in `2819148` (2026-07-17), and again for the
+  game-version boot hook (`panel.py game-sync`, 2026-07-29), with no apply since, so an untargeted `terraform apply` will replace the VM even if you changed nothing. Until that is
   reconciled in a maintenance window, deploy infra with `-target`, e.g.
   `terraform apply -target=google_cloud_run_v2_service.coordinator`. Check `terraform plan` for
   `must be replaced` on `google_compute_instance.palworld` before every apply.
@@ -114,6 +115,15 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   to the last good offset. Archives are extracted member-by-member with traversal/symlink rejection and an
   uncompressed-size cap (`SAVE_MAX_BYTES`) — never `tar xzf` on untrusted input. An import always lands as a
   NEW slot; it never overwrites a world.
+- **Game version is agent-owned:** policy + observed-build history live in `palworld-update.json` on the data disk,
+  the wanted build per save lives in the slot metadata (`version: {mode, buildid}`), and `reconcile_version()` is the
+  single entry point (boot via `panel.py game-sync`, panel start-up thread, save activate/restore, interval, or
+  `POST /api/update/apply`). Installing means stopping the game, so it refuses while players are online unless
+  forced. **Pinning only works for builds this server has observed** — Steam won't serve manifest ids for old builds,
+  so `download_depot` needs manifests we recorded while that build was current (the installed build is always
+  readable from `appmanifest_<app>.acf`). A pinned install does NOT update that `.acf`, hence the agent's own
+  `installed` marker wins for `method: "pinned"`. `/api/update*` is gated view/settings (like `/api/config`);
+  `/api/saves/{guid}/version` is gated `saves`, because the version belongs to the save.
 - **Discord bot:** `POST /api/discord/interactions` is handled *before* the auth gate and authenticated by
   Ed25519 signature (`DISCORD_PUBLIC_KEY`; empty = 404). Discord roles map to the same perm set, then flow
   through the usual `_rbac_headers()` signing — no privileged side-channel. Answer within ~3s or Discord drops

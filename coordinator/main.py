@@ -933,6 +933,14 @@ ROUTES = [
     ("GET", _prefix("/api/mods"), "view", _h_proxy_long),
     ("NOT_GET", _prefix("/api/mods"), "mods", _h_proxy_long),
     ("POST", _exact("/api/restart"), "settings", _h_proxy),
+    # game version / auto-update. Read is `view`; changing the policy, checking
+    # Steam or installing a build is `settings` -- same permission as editing the
+    # server config, and an install restarts the game just like /api/restart.
+    # Apply answers immediately (the agent installs in a background thread and
+    # the console polls the job), but POST /api/update/check shells out to
+    # steamcmd, which can outrun the 30s proxy timeout -- hence the long proxy.
+    ("GET", _prefix("/api/update"), "view", _h_proxy),
+    ("NOT_GET", _prefix("/api/update"), "settings", _h_proxy_long),
 ]
 
 

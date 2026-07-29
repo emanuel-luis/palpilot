@@ -116,7 +116,7 @@ export async function handle(ctx: Ctx): Promise<Response> {
   }
 
   // ── vm_offline gate for VM-required routes ──────────────────────────
-  const vmRequired = /^\/api\/(rest|config|saves|mods|restart|metrics|logs)/.test(path);
+  const vmRequired = /^\/api\/(rest|config|saves|mods|restart|metrics|logs|update)/.test(path);
   if (vmRequired && fx.vm.status !== "RUNNING") {
     return json({ ok: false, error: "vm_offline", status: fx.vm.status }, 503);
   }
@@ -275,6 +275,55 @@ export async function handle(ctx: Ctx): Promise<Response> {
     return json({ ok: true, error: null, reset: true, raw: fx.config.raw, options: { ...fx.config.options }, path: fx.config.path });
   }
 
+  // ── game version / updates ──────────────────────────────────────────
+  //
+  // The install is asynchronous for real (steamcmd takes minutes), so the mock
+  // is too: apply flips the job to running and a timer lands it. That is the
+  // only way the polling UI gets exercised in mock mode.
+  if (path === "/api/update" && method === "GET") {
+    const active = fx.saves.slots.find((s: any) => s.guid === fx.saves.active);
+    const want = active?.version?.mode === "pinned"
+      ? { mode: "pinned", buildid: active.version.buildid, guid: fx.saves.active }
+      : { mode: "latest", buildid: fx.update.latest.buildid, guid: fx.saves.active };
+    return json({
+      ok: true, error: null,
+      app_id: fx.update.app_id, runtime_mode: fx.mods.runtime_mode,
+      installed: fx.update.installed, latest: fx.update.latest,
+      policy: fx.update.policy,
+      active: { guid: fx.saves.active, mode: want.mode, buildid: want.mode === "pinned" ? want.buildid : null },
+      target: want,
+      up_to_date: fx.update.installed.buildid === want.buildid,
+      builds: fx.update.builds, job: fx.update.job, last_run: fx.update.last_run,
+    });
+  }
+  if (path === "/api/update/job" && method === "GET") return json({ ok: true, error: null, job: fx.update.job });
+  if (path === "/api/update/check" && method === "POST") {
+    fx.update.latest = { ...fx.update.latest, checked: new Date().toISOString(), error: null };
+    return json({ ok: true, error: null, latest: fx.update.latest, installed: fx.update.installed });
+  }
+  if (path === "/api/update/policy" && method === "POST") {
+    const b = await readJson(ctx.body);
+    fx.update.policy = { auto_update: !!b.auto_update };
+    return json({ ok: true, error: null, ...fx.update.policy });
+  }
+  if (path === "/api/update/apply" && method === "POST") {
+    const b = await readJson(ctx.body);
+    if (fx.update.job.state === "running") return json({ ok: false, error: "an update is already running" }, 409);
+    const players = knobs.showPlayers ? fx.playersSample.length : 0;
+    if (players > 0 && !b.force) {
+      return json({ ok: false, error: `${players} player(s) online; updating restarts the game`, players }, 409);
+    }
+    const wanted = String(b.target || "latest");
+    const buildid = wanted === "latest" ? fx.update.latest.buildid : wanted;
+    fx.update.job = { state: "running", phase: "installing", target: wanted, reason: "manual", started: new Date().toISOString(), finished: null, error: null, log: "" };
+    setTimeout(() => {
+      fx.update.installed = { ...fx.update.installed, buildid, updated: new Date().toISOString(), method: wanted === "latest" ? "latest" : "pinned" };
+      fx.update.job = { ...fx.update.job, state: "done", phase: "", finished: new Date().toISOString() };
+      fx.update.last_run = { target: wanted, reason: "manual", ok: true, error: null, at: new Date().toISOString() };
+    }, 6000);
+    return json({ ok: true, error: null, started: true, job: fx.update.job });
+  }
+
   // ── saves ───────────────────────────────────────────────────────────
   if (path === "/api/saves" && method === "GET") return json({ ok: true, error: null, active: fx.saves.active, slots: fx.saves.slots });
   if (path === "/api/saves" && method === "POST") {
@@ -326,6 +375,23 @@ export async function handle(ctx: Ctx): Promise<Response> {
       return json({ ok: true, error: null, backed_up: true, guid, file: b.file, local: true, remote: true });
     }
     if (sub === "/backups" && method === "GET") return json({ ok: true, error: null, guid, backups: fx.backups[guid] || [] });
+    if (sub === "/version" && method === "GET") {
+      const v = slot.version || { mode: "latest", buildid: null };
+      return json({ ok: true, error: null, guid, ...v, installed: fx.update.installed.buildid });
+    }
+    if (sub === "/version" && method === "POST") {
+      const b = await readJson(ctx.body);
+      if (b.mode === "pinned") {
+        const buildid = String(b.buildid || fx.update.installed.buildid || "");
+        const known = fx.update.builds.some((e: any) => e.buildid === buildid);
+        if (!known) return json({ ok: false, error: `build ${buildid} has no known depot manifests` }, 409);
+        slot.version = { mode: "pinned", buildid, pinned_at: new Date().toISOString() };
+      } else {
+        delete slot.version;
+      }
+      const v = slot.version || { mode: "latest", buildid: null };
+      return json({ ok: true, error: null, guid, ...v });
+    }
     if (sub === "/restore" && method === "POST") {
       const b = await readJson(ctx.body);
       const previous = fx.saves.active;

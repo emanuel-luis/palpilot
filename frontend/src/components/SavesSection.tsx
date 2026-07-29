@@ -6,6 +6,7 @@ import { useState } from "react";
 import {
   useSaves, useBackups, useCreateSave, useCloneSave, useRenameSave,
   useActivateSave, useBackupSave, useRestoreBackup, useDeleteSave, isOffline,
+  useGameVersion, useSetSaveVersion,
 } from "@/hooks/queries";
 import { apiPost, apiDelete, apiUpload, apiDownload } from "@/lib/api";
 import { session } from "@/stores/session";
@@ -37,6 +38,13 @@ export function SavesSection() {
   const backup = useBackupSave();
   const restore = useRestoreBackup();
   const del = useDeleteSave();
+  // The version a save runs on is part of the save, so it is edited here rather
+  // than on the Game version page (which owns the server-wide auto-update
+  // policy). Pinning needs the same `saves` permission as the rest of this page.
+  const version = useGameVersion();
+  const setVersion = useSetSaveVersion();
+  const installedBuild: string | null =
+    !isOffline(version.data) ? ((version.data as any)?.installed?.buildid || null) : null;
 
   const [newName, setNewName] = useState("");
   const [openGuid, setOpenGuid] = useState<string | null>(null);
@@ -159,6 +167,32 @@ export function SavesSection() {
     const r = await restore.mutateAsync({ guid: s.guid, ref: b.ref, asNewSlot: asNew, name: name || undefined });
     if (!r.ok) toast.err(r.error || t("saves.restoreFailed"));
     else toast.ok(t("saves.restoreDone"));
+  }
+
+  async function onTogglePin(s: any) {
+    const isPinned = s.version?.mode === "pinned";
+    if (isPinned) {
+      const ok = await confirm({
+        message: t("saves.unpinHint", { name: s.name }),
+        confirmLabel: t("saves.unpin"),
+      });
+      if (!ok) return;
+      const r = await setVersion.mutateAsync({ guid: s.guid, mode: "latest" });
+      if (!r.ok) toast.err(r.error || t("saves.pinFailed"));
+      else toast.ok(t("saves.unpinDone"));
+      return;
+    }
+    const ok = await confirm({
+      title: t("saves.pinTitle", { name: s.name }),
+      // No buildid in the body: the agent pins whatever is installed right now,
+      // which is the only build guaranteed to be reinstallable later.
+      message: t("saves.pinHint", { buildid: installedBuild || t("common.unknown") }),
+      confirmLabel: t("saves.pin"),
+    });
+    if (!ok) return;
+    const r = await setVersion.mutateAsync({ guid: s.guid, mode: "pinned" });
+    if (!r.ok) toast.err(r.error || t("saves.pinFailed"));
+    else toast.ok(t("saves.pinDone", { buildid: (r.data as any)?.buildid || installedBuild || "" }));
   }
 
   async function onDownloadSlot(s: any) {
@@ -342,6 +376,10 @@ export function SavesSection() {
                         <div className="field-hint mono" style={{ fontSize: 11 }}>
                           {s.guid} · {formatBytes(s.size)} · {t("saves.colLastBackup")}{" "}
                           {s.last_backup ? formatDate(s.last_backup) : "—"}
+                          {" · "}
+                          {s.version?.mode === "pinned"
+                            ? t("saves.versionPinned", { buildid: s.version.buildid })
+                            : t("saves.versionLatest")}
                         </div>
                       </div>
                       <div className="row-tight">
@@ -382,6 +420,18 @@ export function SavesSection() {
                               onClick={() => onBackup(s)}
                               disabled={s.empty || backup.isPending}
                             >{t("saves.backup")}</button>
+                            <button
+                              className="btn btn-sm"
+                              onClick={() => onTogglePin(s)}
+                              disabled={setVersion.isPending || (!installedBuild && s.version?.mode !== "pinned")}
+                              title={
+                                s.version?.mode === "pinned"
+                                  ? t("saves.unpinHint", { name: s.name })
+                                  : t("saves.pinHint", { buildid: installedBuild || "?" })
+                              }
+                            >
+                              {s.version?.mode === "pinned" ? t("saves.unpin") : t("saves.pin")}
+                            </button>
                             <button className="btn btn-sm" onClick={() => onClone(s)} disabled={clone.isPending}>
                               {t("saves.clone")}
                             </button>

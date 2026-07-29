@@ -22,6 +22,7 @@ const Saves = lazy(() => import("@/views/pages/sections").then((m) => ({ default
 const Settings = lazy(() => import("@/views/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const Mods = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.ModsPage })));
 const Watchdog = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.WatchdogPage })));
+const Updates = lazy(() => import("@/views/pages/sections").then((m) => ({ default: m.UpdatesPage })));
 const Logs = lazy(() => import("@/views/pages/LogsPage").then((m) => ({ default: m.LogsPage })));
 const Performance = lazy(() => import("@/views/pages/PerformancePage").then((m) => ({ default: m.PerformancePage })));
 const Users = lazy(() => import("@/views/Users").then((m) => ({ default: m.UsersView })));
@@ -37,6 +38,7 @@ export const ROUTES: RouteDef[] = [
   { route: "/settings", perms: ["view"], Component: Settings },
   { route: "/mods", perms: ["view"], Component: Mods },
   { route: "/watchdog", perms: ["view"], Component: Watchdog },
+  { route: "/updates", perms: ["view"], Component: Updates },
   { route: "/performance", perms: ["view"], Component: Performance },
   { route: "/logs", perms: ["view"], Component: Logs },
   { route: "/users", perms: ["users"], Component: Users },

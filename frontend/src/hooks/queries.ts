@@ -152,6 +152,77 @@ export function useDeleteSave() {
   });
 }
 
+// --------------------------------------------------------------- game version
+//
+// The agent installs in a background thread (a steamcmd run outlives any request
+// the coordinator holds open), so apply answers immediately and progress is read
+// back from the `job` field — hence the fast refetch while a job is running.
+
+export function useGameVersion() {
+  return useQuery({
+    queryKey: ["update"],
+    queryFn: () => apiGet<any>("/api/update").then(unwrap),
+    enabled: session.can("view"),
+    refetchInterval: (q) => {
+      const d: any = q.state.data;
+      return d && !d.offline && d.job?.state === "running" ? 4000 : false;
+    },
+  });
+}
+
+/** POST /api/update/check — asks Steam for the current public buildid. */
+export function useCheckUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiPost<any>("/api/update/check"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["update"] }),
+  });
+}
+
+/** POST /api/update/apply — `target` is "latest" or a buildid. Restarts the game. */
+export function useApplyUpdate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ target, force }: { target: string; force?: boolean }) =>
+      apiPost<any>("/api/update/apply", { target, restart: true, ...(force ? { force: true } : {}) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["update"] });
+      qc.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
+}
+
+export function useUpdatePolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (auto_update: boolean) => apiPost<any>("/api/update/policy", { auto_update }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["update"] }),
+  });
+}
+
+/**
+ * POST /api/saves/{guid}/version — binds a game build to a save.
+ *
+ * Under /api/saves, so this needs the `saves` permission, not `settings`: the
+ * version a world runs on is part of the world. `apply` additionally installs it
+ * right away, which only means anything for the active save.
+ */
+export function useSetSaveVersion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ guid, mode, buildid, apply }: { guid: string; mode: "latest" | "pinned"; buildid?: string; apply?: boolean }) =>
+      apiPost<any>(`/api/saves/${encodeURIComponent(guid)}/version`, {
+        mode,
+        ...(buildid ? { buildid } : {}),
+        ...(apply ? { apply: true } : {}),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saves"] });
+      qc.invalidateQueries({ queryKey: ["update"] });
+    },
+  });
+}
+
 // --------------------------------------------------------------- settings
 //
 // Two reads, merged: /api/config carries the raw INI text, the file path and the

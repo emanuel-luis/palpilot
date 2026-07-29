@@ -141,6 +141,28 @@ UPLOAD_PART_MAX_BYTES = int(os.environ.get("UPLOAD_PART_MAX_BYTES", str(24 * 102
 # Abandoned upload sessions (browser closed mid-upload) are swept on the next init.
 UPLOAD_SESSION_TTL = int(os.environ.get("UPLOAD_SESSION_TTL", str(6 * 3600)))
 
+# --- game version / updates ---
+# Palworld dedicated server on Steam. steamcmd is installed by startup.sh and
+# the panel already runs as the steam user, so it can drive it directly (no
+# `runuser`, which would need root).
+STEAM_APP_ID = os.environ.get("STEAM_APP_ID", "2394010")
+STEAMCMD = os.environ.get("STEAMCMD", "/usr/games/steamcmd")
+# Update policy + observed-build history. On the persistent disk, next to the
+# other sidecars, so it survives a VM recreate along with the worlds it pins.
+UPDATE_META = os.environ.get("UPDATE_META", f"{STEAM_DIR}/Pal/Saved/palworld-update.json")
+# Steam's own record of what it installed (buildid + per-depot manifest ids).
+APPMANIFEST = os.environ.get(
+    "APPMANIFEST", f"{STEAM_DIR}/steamapps/appmanifest_{STEAM_APP_ID}.acf"
+)
+# How often the background watcher re-asks Steam for the public buildid.
+UPDATE_CHECK_SECONDS = int(os.environ.get("UPDATE_CHECK_SECONDS", str(3 * 3600)))
+# A full `app_update validate` on a ~10GB app is slow; give it room.
+UPDATE_TIMEOUT = int(os.environ.get("UPDATE_TIMEOUT", "3600"))
+UPDATE_INFO_TIMEOUT = int(os.environ.get("UPDATE_INFO_TIMEOUT", "180"))
+# Builds we remember well enough to reinstall (see the pinning note in the
+# "Game version" section: only observed builds can be pinned).
+UPDATE_HISTORY_KEEP = int(os.environ.get("UPDATE_HISTORY_KEEP", "20"))
+
 
 def _gce_project_id() -> str:
     """Ask the GCE metadata server for this VM's project id (empty if off-GCE)."""
@@ -653,6 +675,9 @@ def list_slots() -> dict:
                 "size": _dir_size(full),
                 "empty": not os.listdir(full),
                 "last_backup": m.get("last_backup"),
+                # Pinned game build, when this save has one. Absent/latest means
+                # it follows upstream (see the "Game version" section).
+                "version": m.get("version") or {"mode": "latest", "buildid": None},
             }
         )
     # An active world whose folder doesn't exist yet (fresh slot not booted).
@@ -668,6 +693,7 @@ def list_slots() -> dict:
                 "empty": True,
                 "pending": True,
                 "last_backup": m.get("last_backup"),
+                "version": m.get("version") or {"mode": "latest", "buildid": None},
             }
         )
     return {"ok": True, "error": None, "active": active, "slots": slots}
@@ -714,6 +740,11 @@ def clone_slot(guid: str, name: str) -> dict:
     created = _timestamp()
     meta = _load_slots_meta()
     meta[new_guid] = {"name": friendly, "created": created, "cloned_from": guid}
+    # A pinned game version is part of the save too, so the clone stays on the
+    # build its world was built for.
+    src_version = (meta.get(guid) or {}).get("version")
+    if isinstance(src_version, dict) and src_version.get("buildid"):
+        meta[new_guid]["version"] = dict(src_version)
     _save_slots_meta(meta)
     result = {
         "ok": True,
@@ -961,6 +992,15 @@ def activate_slot(guid: str, restart: bool = True) -> dict:
     apply_slot_config(guid)
     bootstrap()
     save_active_config_to_slot(guid)
+    # A save can be pinned to a game build (see the "Game version" section), so
+    # the version is part of switching worlds, not a separate chore: install the
+    # incoming save's build while the game is still stopped. Never fatal -- a
+    # failed install leaves the current binaries in place and is reported.
+    version = {}
+    try:
+        version = reconcile_version(reason="activate", blocking=True)
+    except Exception as e:  # noqa: BLE001
+        version = {"ok": False, "error": str(e)}
     started = False
     if restart and was_active:
         start_service()
@@ -971,6 +1011,7 @@ def activate_slot(guid: str, restart: bool = True) -> dict:
         "previous": current,
         "active": guid,
         "backup": backup,
+        "version": version,
         "restarted": started,
     }
 
@@ -1041,14 +1082,25 @@ def restore_backup(guid: str, ref: str, as_new_slot: bool = False, name: str = "
             "created": meta.get(target_guid, {}).get("created") or _timestamp(),
         }
     if as_new_slot:
-        # a restored-as-new slot inherits the source slot's settings
+        # a restored-as-new slot inherits the source slot's settings, and its
+        # pinned game version: a backup of a frozen playthrough restores onto
+        # the build it was played on.
         copy_slot_config(guid, target_guid)
+        src_version = (meta.get(guid) or {}).get("version")
+        if isinstance(src_version, dict) and src_version.get("buildid"):
+            meta[target_guid]["version"] = dict(src_version)
     _save_slots_meta(meta)
     save_active_config_to_slot(current) if current else None
     set_active_world(target_guid)
     apply_slot_config(target_guid)
     bootstrap()
     save_active_config_to_slot(target_guid)
+    # Restoring switches the active world, so the game build follows it too
+    # (same rule as activate_slot; never fatal).
+    try:
+        reconcile_version(reason="restore", blocking=True)
+    except Exception:  # noqa: BLE001
+        pass
     started = False
     if was_running:
         start_service()
@@ -2391,6 +2443,723 @@ def read_log(name: str = "", cursor: int = -1, max_bytes: int = 0) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Game version / updates
+#
+# Two things live here:
+#
+#   1. Auto-update. The game only ever changed version when steamcmd ran, and
+#      steamcmd only ran on a fresh boot with no PalServer on the data disk --
+#      i.e. never, on a long-lived VM. So a Palworld release simply left this
+#      server behind. Now: a background watcher asks Steam for the public
+#      buildid, and reconciles the install towards the wanted build (on panel
+#      start = every boot, on a save switch, and on the interval). Enabled by
+#      default (`auto_update: true`).
+#
+#   2. Version pinning per save. A world can be frozen on a build ("fixed
+#      version for specific gameplays"): the pin lives in the SLOT metadata, so
+#      it travels with the save through clone/restore-as-new, and activating a
+#      slot installs that slot's build before the game starts.
+#
+# Pinning mechanics, and the one honest limitation: steamcmd cannot install "a
+# buildid". It installs either the current public build (`app_update`) or an
+# exact depot manifest (`download_depot`). Manifest ids for OLD builds are not
+# retrievable from Steam, so a build can only be pinned if we recorded its
+# manifests while it was current -- which we do on every check and every
+# install, plus the currently-installed build is always readable out of
+# appmanifest_<app>.acf. Pinning "the build running right now" therefore always
+# works (the common case); pinning a build this server never saw answers 409
+# rather than silently installing something else.
+# ---------------------------------------------------------------------------
+
+_update_lock = threading.Lock()
+# Last/current install job. Polled by the console: an `app_update validate`
+# takes minutes, far longer than a proxied HTTP request may hang around.
+_update_job = {
+    "state": "idle",  # idle | running | done | error
+    "phase": "",
+    "target": None,
+    "reason": "",
+    "started": None,
+    "finished": None,
+    "error": None,
+    "log": "",
+}
+
+
+def _load_update_meta() -> dict:
+    if os.path.exists(UPDATE_META):
+        try:
+            with open(UPDATE_META, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_update_meta(meta: dict):
+    atomic_write(UPDATE_META, json.dumps(meta, indent=2))
+    _chown_steam(UPDATE_META)
+
+
+def update_policy() -> dict:
+    """Global auto-update switch. Absent = on: following upstream is the safe
+    default for a server that would otherwise drift behind the game clients."""
+    meta = _load_update_meta()
+    return {"auto_update": bool(meta.get("auto_update", True))}
+
+
+def set_update_policy(auto_update: bool) -> dict:
+    meta = _load_update_meta()
+    meta["auto_update"] = bool(auto_update)
+    _save_update_meta(meta)
+    return {"ok": True, "error": None, **update_policy()}
+
+
+# ---- VDF / ACF parsing (Steam's KeyValues text format) ----
+
+
+_VDF_TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|(\{)|(\})')
+
+
+def _parse_vdf(text: str) -> dict:
+    """Parse Steam KeyValues text into nested dicts.
+
+    Tolerant on purpose: `steamcmd +app_info_print` wraps the tree in console
+    chatter, and an unbalanced tail (rate-limited/truncated output) must yield
+    what was parsed rather than raise. Duplicate keys: last one wins."""
+    root: dict = {}
+    stack = [root]
+    pending_key = None
+    for m in _VDF_TOKEN.finditer(text):
+        string, open_brace, close_brace = m.group(1), m.group(2), m.group(3)
+        if string is not None:
+            string = string.replace('\\"', '"').replace("\\\\", "\\")
+            if pending_key is None:
+                pending_key = string
+            else:
+                stack[-1][pending_key] = string
+                pending_key = None
+        elif open_brace:
+            child: dict = {}
+            # A `{` with no key before it (shouldn't happen) is dropped, not fatal.
+            if pending_key is not None:
+                stack[-1][pending_key] = child
+                pending_key = None
+            stack.append(child)
+        elif close_brace:
+            pending_key = None
+            if len(stack) > 1:
+                stack.pop()
+    return root
+
+
+def _depots_from_appinfo(tree: dict) -> dict:
+    """(buildid, {depot_id: manifest_gid}) for the public branch of app_info_print.
+
+    Note the shape: in appinfo, `branches` is nested INSIDE `depots`, alongside
+    the numeric depot ids -- not a sibling of it."""
+    node = tree.get(STEAM_APP_ID)
+    if not isinstance(node, dict):
+        # Fall back to the first app-looking child (appid keys vary by call).
+        node = next((v for v in tree.values() if isinstance(v, dict)), {})
+    depots_node = node.get("depots") if isinstance(node.get("depots"), dict) else {}
+    branches = depots_node.get("branches") if isinstance(depots_node.get("branches"), dict) else {}
+    public = branches.get("public") if isinstance(branches.get("public"), dict) else {}
+    buildid = str(public.get("buildid") or "") or None
+    depots = {}
+    for key, val in depots_node.items():
+        if not key.isdigit() or not isinstance(val, dict):
+            continue
+        manifests = val.get("manifests")
+        gid = None
+        if isinstance(manifests, dict):
+            pub = manifests.get("public")
+            # Newer appinfo nests {"gid": "..."}; older ones store the gid directly.
+            gid = pub.get("gid") if isinstance(pub, dict) else pub
+        if gid:
+            depots[key] = str(gid)
+    return {"buildid": buildid, "depots": depots}
+
+
+def _read_appmanifest() -> dict:
+    """What Steam thinks is installed: buildid + per-depot manifest ids."""
+    try:
+        with open(APPMANIFEST, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+    except OSError:
+        return {"buildid": None, "depots": {}, "updated": None}
+    tree = _parse_vdf(raw)
+    state = tree.get("AppState") if isinstance(tree.get("AppState"), dict) else {}
+    depots = {}
+    installed = state.get("InstalledDepots")
+    if isinstance(installed, dict):
+        for key, val in installed.items():
+            if key.isdigit() and isinstance(val, dict) and val.get("manifest"):
+                depots[key] = str(val["manifest"])
+    updated = state.get("LastUpdated")
+    return {
+        "buildid": str(state.get("buildid") or "") or None,
+        "depots": depots,
+        "updated": int(updated) if str(updated or "").isdigit() else None,
+    }
+
+
+# ---- what is installed / what is available ----
+
+
+def _record_build(meta: dict, buildid: str, depots: dict, source: str) -> None:
+    """Remember a build's depot manifests so it stays pinnable later."""
+    if not buildid or not depots:
+        return
+    builds = meta.setdefault("builds", {})
+    entry = builds.setdefault(buildid, {"first_seen": _timestamp(), "source": source})
+    entry["depots"] = depots
+    entry["source"] = source
+    if len(builds) > UPDATE_HISTORY_KEEP:
+        # Drop the oldest first_seen entries; never drop a build a save pins.
+        pinned = {
+            (v.get("version") or {}).get("buildid")
+            for v in _load_slots_meta().values()
+            if isinstance(v, dict)
+        }
+        droppable = sorted(
+            (b for b in builds if b not in pinned),
+            key=lambda b: builds[b].get("first_seen") or "",
+        )
+        for b in droppable[: len(builds) - UPDATE_HISTORY_KEEP]:
+            builds.pop(b, None)
+
+
+def installed_version() -> dict:
+    """The build on disk.
+
+    Our own marker wins for a pinned install: `download_depot` writes files
+    without updating appmanifest_<app>.acf, so Steam's record would still name
+    the build we moved away from. For everything else the .acf is authoritative
+    (it also covers the very first install, done by startup.sh, not by us)."""
+    meta = _load_update_meta()
+    marker = meta.get("installed") if isinstance(meta.get("installed"), dict) else {}
+    acf = _read_appmanifest()
+    if marker.get("method") == "pinned" and marker.get("buildid"):
+        return {
+            "buildid": marker["buildid"],
+            "depots": marker.get("depots") or {},
+            "updated": marker.get("updated"),
+            "method": "pinned",
+            "source": "marker",
+        }
+    if acf.get("buildid"):
+        return {**acf, "method": "latest", "source": "appmanifest"}
+    if marker.get("buildid"):
+        return {**marker, "source": "marker"}
+    return {"buildid": None, "depots": {}, "updated": None, "method": None, "source": None}
+
+
+def _mark_installed(buildid: str, depots: dict, method: str) -> None:
+    meta = _load_update_meta()
+    meta["installed"] = {
+        "buildid": buildid or None,
+        "depots": depots or {},
+        "method": method,
+        "updated": _timestamp(),
+    }
+    _record_build(meta, buildid, depots, "installed")
+    _save_update_meta(meta)
+
+
+def _steamcmd_cmd(rest: list) -> list:
+    """steamcmd invocation matching startup.sh's (force_install_dir before
+    login; the Windows platform override for the Proton runtime)."""
+    args = [STEAMCMD, "+force_install_dir", STEAM_DIR, "+login", "anonymous"]
+    if RUNTIME_MODE == "proton":
+        args = [
+            STEAMCMD,
+            "+force_install_dir",
+            STEAM_DIR,
+            "+login",
+            "anonymous",
+            "+@sSteamCmdForcePlatformType",
+            "windows",
+        ]
+    return args + rest + ["+quit"]
+
+
+def _run_steamcmd(rest: list, timeout: int):
+    return subprocess.run(
+        _steamcmd_cmd(rest),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        errors="replace",
+    )
+
+
+def latest_version(refresh: bool = False) -> dict:
+    """The public build Steam is serving.
+
+    Read-only by default: it answers from the UPDATE_META cache and never shells
+    out, because it sits behind GET /api/update, whose proxy gives up long before
+    steamcmd would finish. Only `refresh=True` (the watcher, the boot pass, and
+    POST /api/update/check) pays the network cost."""
+    meta = _load_update_meta()
+    cached = meta.get("latest") if isinstance(meta.get("latest"), dict) else {}
+    if not refresh:
+        return cached
+    try:
+        r = _run_steamcmd(
+            ["+app_info_update", "1", "+app_info_print", STEAM_APP_ID],
+            timeout=UPDATE_INFO_TIMEOUT,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        return {**cached, "error": f"steamcmd: {e}"}
+    info = _depots_from_appinfo(_parse_vdf(r.stdout or ""))
+    if not info["buildid"]:
+        tail = ((r.stderr or "") + (r.stdout or ""))[-400:]
+        return {**cached, "error": f"could not read the public buildid from steamcmd: {tail}"}
+    latest = {
+        "buildid": info["buildid"],
+        "depots": info["depots"],
+        "checked": _timestamp(),
+        "error": None,
+    }
+    meta = _load_update_meta()
+    meta["latest"] = latest
+    _record_build(meta, info["buildid"], info["depots"], "appinfo")
+    _save_update_meta(meta)
+    return latest
+
+
+def known_builds() -> list:
+    """Builds this server can still (re)install, newest first."""
+    meta = _load_update_meta()
+    builds = meta.get("builds") if isinstance(meta.get("builds"), dict) else {}
+    out = [
+        {
+            "buildid": b,
+            "first_seen": v.get("first_seen"),
+            "source": v.get("source"),
+            "depots": len(v.get("depots") or {}),
+        }
+        for b, v in builds.items()
+        if isinstance(v, dict)
+    ]
+    out.sort(key=lambda e: int(e["buildid"]) if e["buildid"].isdigit() else 0, reverse=True)
+    return out
+
+
+def _depots_for_build(buildid: str) -> dict:
+    meta = _load_update_meta()
+    builds = meta.get("builds") if isinstance(meta.get("builds"), dict) else {}
+    entry = builds.get(buildid)
+    if isinstance(entry, dict) and entry.get("depots"):
+        return dict(entry["depots"])
+    inst = installed_version()
+    if inst.get("buildid") == buildid and inst.get("depots"):
+        return dict(inst["depots"])
+    return {}
+
+
+# ---- per-save version binding ----
+
+
+def slot_version(guid: str = "") -> dict:
+    """A save's wanted version. Default: follow the latest public build."""
+    guid = guid or get_active_world()
+    entry = _load_slots_meta().get(guid) or {}
+    ver = entry.get("version") if isinstance(entry.get("version"), dict) else {}
+    mode = "pinned" if ver.get("mode") == "pinned" and ver.get("buildid") else "latest"
+    return {
+        "guid": guid,
+        "mode": mode,
+        "buildid": ver.get("buildid") if mode == "pinned" else None,
+        "pinned_at": ver.get("pinned_at") if mode == "pinned" else None,
+    }
+
+
+def set_slot_version(guid: str, mode: str, buildid: str = "") -> dict:
+    """Bind a version to a save. `mode="pinned"` with no buildid pins the build
+    that is installed right now -- the "freeze this playthrough" case, and the
+    only pin that is guaranteed installable."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", guid or ""):
+        return {"ok": False, "reason": "validation", "error": "invalid guid"}
+    if mode not in ("latest", "pinned"):
+        return {"ok": False, "reason": "validation", "error": "mode must be latest or pinned"}
+    meta = _load_slots_meta()
+    if guid not in meta and not os.path.isdir(os.path.join(SAVEGAMES_DIR, guid)):
+        return {"ok": False, "reason": "not_found", "error": "unknown save slot"}
+    if mode == "latest":
+        entry = meta.setdefault(guid, {})
+        entry.pop("version", None)
+        _save_slots_meta(meta)
+        return {"ok": True, "error": None, **slot_version(guid)}
+
+    buildid = str(buildid or "").strip() or (installed_version().get("buildid") or "")
+    if not buildid:
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "error": "no build to pin: nothing is installed yet",
+        }
+    if not buildid.isdigit():
+        return {"ok": False, "reason": "validation", "error": "buildid must be numeric"}
+    if not _depots_for_build(buildid):
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "error": (
+                f"build {buildid} has no known depot manifests, so it cannot be "
+                "reinstalled. Only builds this server has observed can be pinned."
+            ),
+        }
+    meta.setdefault(guid, {})["version"] = {
+        "mode": "pinned",
+        "buildid": buildid,
+        "pinned_at": _timestamp(),
+    }
+    _save_slots_meta(meta)
+    return {"ok": True, "error": None, **slot_version(guid)}
+
+
+def resolve_target(guid: str = "") -> dict:
+    """The build a save should be running, resolved against the cached latest.
+    `buildid` is None when the save follows latest and we've never checked."""
+    want = slot_version(guid)
+    if want["mode"] == "pinned":
+        return {"mode": "pinned", "buildid": want["buildid"], "guid": want["guid"]}
+    latest = latest_version()
+    return {"mode": "latest", "buildid": latest.get("buildid"), "guid": want["guid"]}
+
+
+# ---- installing ----
+
+
+def _job_set(**fields) -> None:
+    _update_job.update(fields)
+
+
+def update_job() -> dict:
+    return dict(_update_job)
+
+
+def _players_online() -> int:
+    """Best-effort player count; -1 when the game can't be asked (it's the
+    difference between "empty, safe to update" and "unknown, don't touch")."""
+    try:
+        status, payload = rest_call("GET", "players")
+    except Exception:  # noqa: BLE001
+        return -1
+    if status != 200 or not isinstance(payload, dict):
+        return -1
+    players = payload.get("players")
+    return len(players) if isinstance(players, list) else -1
+
+
+def _install_latest() -> dict:
+    r = _run_steamcmd(["+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT)
+    log = ((r.stdout or "") + (r.stderr or ""))[-4000:]
+    acf = _read_appmanifest()
+    if not acf.get("buildid"):
+        return {"ok": False, "reason": "conflict", "error": "app_update left no appmanifest", "log": log}
+    _mark_installed(acf["buildid"], acf.get("depots") or {}, "latest")
+    return {"ok": True, "error": None, "buildid": acf["buildid"], "log": log}
+
+
+def _depot_content_dirs(depot: str) -> list:
+    """Where `download_depot` may have dropped the files. It does not honour
+    force_install_dir consistently across steamcmd builds, so check the known
+    roots rather than assuming one."""
+    rel = os.path.join("steamapps", "content", f"app_{STEAM_APP_ID}", f"depot_{depot}")
+    home = os.path.expanduser("~")
+    roots = [STEAM_DIR, os.path.join(home, "Steam"), os.path.join(home, ".steam", "steamcmd")]
+    return [os.path.join(r, rel) for r in roots]
+
+
+def _install_pinned(buildid: str) -> dict:
+    depots = _depots_for_build(buildid)
+    if not depots:
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "error": f"no known depot manifests for build {buildid}",
+        }
+    # download_depot stages a SECOND copy of the game under steamapps/content
+    # before we move it into place, so a pinned install briefly needs about
+    # twice the install size. The data disk is 40GB against a ~10GB game: refuse
+    # up front rather than fill the disk the worlds live on.
+    need = _dir_size(os.path.join(STEAM_DIR, "Pal")) or 10 * 1024**3
+    try:
+        free = shutil.disk_usage(STEAM_DIR).free
+    except OSError:
+        free = need * 2  # can't tell; don't invent a failure
+    if free < need * 11 // 10:
+        return {
+            "ok": False,
+            "reason": "conflict",
+            "error": (
+                f"not enough free space to stage build {buildid}: "
+                f"{free // 1024**2} MiB free, ~{need // 1024**2} MiB needed"
+            ),
+        }
+    log_parts = []
+    for depot, manifest in sorted(depots.items()):
+        _job_set(phase=f"downloading depot {depot}")
+        r = _run_steamcmd(
+            ["+download_depot", STEAM_APP_ID, depot, manifest], timeout=UPDATE_TIMEOUT
+        )
+        log_parts.append(((r.stdout or "") + (r.stderr or ""))[-1500:])
+        src = next((d for d in _depot_content_dirs(depot) if os.path.isdir(d)), "")
+        if not src:
+            return {
+                "ok": False,
+                "reason": "conflict",
+                "error": f"depot {depot} manifest {manifest} did not download",
+                "log": "\n".join(log_parts)[-4000:],
+            }
+        _job_set(phase=f"installing depot {depot}")
+        # cp -a, not tar/rsync: preserves modes (PalServer.sh must stay
+        # executable) and neither rsync nor a python copytree merge is
+        # guaranteed present/atomic here.
+        subprocess.run(
+            ["cp", "-a", f"{src}/.", f"{STEAM_DIR}/"], check=True, capture_output=True
+        )
+        shutil.rmtree(src, ignore_errors=True)
+    # download_depot can land the launcher without the exec bit.
+    for rel in ("PalServer.sh", "Pal/Binaries/Linux/PalServer-Linux-Shipping"):
+        p = os.path.join(STEAM_DIR, rel)
+        if os.path.exists(p):
+            try:
+                os.chmod(p, os.stat(p).st_mode | 0o111)
+            except OSError:
+                pass
+    _chown_steam(STEAM_DIR, recursive=False)
+    _mark_installed(buildid, depots, "pinned")
+    return {"ok": True, "error": None, "buildid": buildid, "log": "\n".join(log_parts)[-4000:]}
+
+
+def apply_update(
+    target: str = "", restart: bool = True, reason: str = "manual", force: bool = False
+) -> dict:
+    """Install a build. `target` is "" / "latest" for the public build, or a
+    buildid to install exactly (must be a build we know the manifests for).
+
+    Stops the game first (steamcmd rewriting running binaries is how you get a
+    half-patched server), backs the active world up, installs, restarts."""
+    if not _update_lock.acquire(blocking=False):
+        return {"ok": False, "reason": "conflict", "error": "an update is already running"}
+    try:
+        want = (target or "latest").strip()
+        if want == "pinned":
+            want = resolve_target().get("buildid") or ""
+            if not want:
+                return {"ok": False, "reason": "conflict", "error": "the active save is not pinned"}
+        if want != "latest" and not want.isdigit():
+            return {"ok": False, "reason": "validation", "error": "target must be latest or a buildid"}
+
+        installed = installed_version()
+        if want != "latest" and installed.get("buildid") == want:
+            return {
+                "ok": True,
+                "error": None,
+                "changed": False,
+                "note": "already on that build",
+                "buildid": want,
+            }
+
+        online = _players_online()
+        if online > 0 and not force:
+            return {
+                "ok": False,
+                "reason": "conflict",
+                "error": f"{online} player(s) online; updating restarts the game",
+                "players": online,
+            }
+
+        was_active = _service_active()
+        _job_set(
+            state="running",
+            phase="stopping the server",
+            target=want,
+            reason=reason,
+            started=_timestamp(),
+            finished=None,
+            error=None,
+            log="",
+        )
+        if was_active:
+            stop_service()
+        active = get_active_world()
+        if active:
+            _job_set(phase="backing up the active world")
+            try:
+                backup_world(active, label="pre-update")
+            except (subprocess.CalledProcessError, OSError) as e:
+                # A failed backup must not block a security/compat update, but
+                # it is worth surfacing.
+                _job_set(error=f"pre-update backup failed: {e}")
+        _job_set(phase="installing" if want == "latest" else f"installing build {want}")
+        try:
+            result = _install_latest() if want == "latest" else _install_pinned(want)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+            result = {"ok": False, "reason": "conflict", "error": f"steamcmd failed: {e}"}
+        started = False
+        if restart and was_active:
+            _job_set(phase="starting the server")
+            start_service()
+            started = True
+        _job_set(
+            state="done" if result.get("ok") else "error",
+            phase="",
+            finished=_timestamp(),
+            error=result.get("error"),
+            log=result.get("log", "")[-4000:],
+        )
+        meta = _load_update_meta()
+        meta["last_run"] = {
+            "target": want,
+            "reason": reason,
+            "ok": bool(result.get("ok")),
+            "error": result.get("error"),
+            "at": _timestamp(),
+        }
+        _save_update_meta(meta)
+        if not result.get("ok"):
+            return result
+        return {**result, "changed": True, "restarted": started, "previous": installed.get("buildid")}
+    finally:
+        _update_lock.release()
+
+
+def apply_update_async(target: str = "", restart: bool = True, reason: str = "manual", force: bool = False) -> dict:
+    """Kick an install off in the background and answer immediately: a full
+    `app_update validate` outlives any request the coordinator will hold open.
+    Progress is read back from GET /api/update (the `job` field)."""
+    if _update_job.get("state") == "running":
+        return {"ok": False, "reason": "conflict", "error": "an update is already running"}
+    _job_set(state="running", phase="queued", target=target or "latest", reason=reason,
+             started=_timestamp(), finished=None, error=None, log="")
+
+    def _run():
+        try:
+            r = apply_update(target=target, restart=restart, reason=reason, force=force)
+        except Exception as e:  # noqa: BLE001
+            r = {"ok": False, "error": str(e)}
+        # apply_update's early returns (validation, already-on-build, players
+        # online, lock held) never enter the running state, so the job we
+        # optimistically marked `running` above would hang there forever.
+        if _update_job.get("state") == "running":
+            _job_set(
+                state="done" if r.get("ok") else "error",
+                phase="",
+                finished=_timestamp(),
+                error=r.get("error"),
+            )
+
+    threading.Thread(target=_run, name="game-update", daemon=True).start()
+    return {"ok": True, "error": None, "started": True, "job": update_job()}
+
+
+def reconcile_version(reason: str = "boot", force: bool = False, blocking: bool = True) -> dict:
+    """Make the install match what the active save wants.
+
+    Called on panel start (so every boot self-heals), when a save is activated,
+    and on the watcher interval. Declines while players are connected unless
+    `force` -- an update means a game restart."""
+    want = resolve_target()
+    if want["mode"] == "latest" and not want.get("buildid"):
+        # Nothing cached yet (first boot after this feature shipped): ask Steam.
+        # Only here, never on the read path -- see latest_version().
+        latest_version(refresh=True)
+        want = resolve_target()
+    installed = installed_version()
+    policy = update_policy()
+    out = {
+        "ok": True,
+        "error": None,
+        "reason": reason,
+        "target": want,
+        "installed": installed.get("buildid"),
+        "changed": False,
+    }
+    if want["mode"] == "latest" and not policy["auto_update"]:
+        return {**out, "skipped": "auto_update_off"}
+    if not want.get("buildid"):
+        return {**out, "skipped": "unknown_target"}
+    if installed.get("buildid") == want["buildid"]:
+        return {**out, "up_to_date": True}
+    if want["mode"] == "pinned" and not _depots_for_build(want["buildid"]):
+        return {**out, "skipped": "unknown_manifests", "error": f"build {want['buildid']} is not reinstallable"}
+    online = _players_online()
+    if online > 0 and not force:
+        return {**out, "skipped": "players_online", "players": online, "pending": want["buildid"]}
+    if blocking:
+        r = apply_update(target=want["buildid"] if want["mode"] == "pinned" else "latest",
+                         restart=True, reason=reason, force=force)
+        return {**out, **r}
+    return {**out, **apply_update_async(
+        target=want["buildid"] if want["mode"] == "pinned" else "latest",
+        restart=True, reason=reason, force=force,
+    )}
+
+
+def _update_worker() -> None:
+    while True:
+        time.sleep(UPDATE_CHECK_SECONDS)
+        try:
+            if update_policy()["auto_update"]:
+                latest_version(refresh=True)
+            reconcile_version(reason="scheduled", blocking=True)
+        except Exception as e:  # noqa: BLE001
+            _job_set(error=f"watcher: {e}")
+
+
+def start_update_watcher() -> None:
+    """Boot-time reconcile + periodic check, both off the request path.
+
+    The boot pass is why a plain reboot now lands on the right build: the panel
+    starts alongside the game, sees the mismatch, and (with nobody connected
+    yet) installs before anyone joins."""
+
+    def _boot():
+        try:
+            latest_version(refresh=True)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            reconcile_version(reason="panel-start", blocking=True)
+        except Exception as e:  # noqa: BLE001
+            _job_set(error=f"boot reconcile: {e}")
+        _update_worker()
+
+    threading.Thread(target=_boot, name="game-update-watcher", daemon=True).start()
+
+
+def version_status() -> dict:
+    """Everything the console needs on one read."""
+    active = get_active_world()
+    installed = installed_version()
+    target = resolve_target(active)
+    return {
+        "ok": True,
+        "error": None,
+        "app_id": STEAM_APP_ID,
+        "runtime_mode": RUNTIME_MODE,
+        "installed": installed,
+        "latest": latest_version(),
+        "policy": update_policy(),
+        "active": slot_version(active),
+        "target": target,
+        "up_to_date": bool(
+            installed.get("buildid") and installed.get("buildid") == target.get("buildid")
+        ),
+        "builds": known_builds(),
+        "job": update_job(),
+        "last_run": _load_update_meta().get("last_run"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Domain error envelope: { ok, error, ...data } with real status codes
 # ---------------------------------------------------------------------------
 
@@ -2708,6 +3477,47 @@ def build_app():
                 content={"restarted": False, "error": (e.stderr or b"").decode()},
             )
 
+    # ---- game version / updates ----
+    #
+    # Gated view (read) / settings (write), matching /api/config: choosing which
+    # build the server runs is a server-configuration decision, and applying it
+    # restarts the game exactly like POST /api/restart does.
+
+    @app.get("/api/update")
+    def get_update(_: str = Depends(require("view"))):
+        return version_status()
+
+    @app.get("/api/update/job")
+    def get_update_job(_: str = Depends(require("view"))):
+        return {"ok": True, "error": None, "job": update_job()}
+
+    @app.post("/api/update/check")
+    def post_update_check(_: str = Depends(require("settings"))):
+        latest = latest_version(refresh=True)
+        return _envelope({"ok": not latest.get("error"), "error": latest.get("error"),
+                          "reason": "conflict" if latest.get("error") else None,
+                          "latest": latest, "installed": installed_version(),
+                          "target": resolve_target()})
+
+    @app.post("/api/update/policy")
+    async def post_update_policy(payload: dict, _: str = Depends(require("settings"))):
+        if "auto_update" not in (payload or {}):
+            return _envelope({"ok": False, "reason": "validation", "error": "auto_update is required"})
+        return _envelope(set_update_policy(bool(payload["auto_update"])))
+
+    @app.post("/api/update/apply")
+    async def post_update_apply(payload: dict | None = None, _: str = Depends(require("settings"))):
+        body = payload or {}
+        # Answers immediately; the console polls GET /api/update for progress.
+        return _envelope(
+            apply_update_async(
+                target=str(body.get("target") or "latest"),
+                restart=bool(body.get("restart", True)),
+                reason="manual",
+                force=bool(body.get("force")),
+            )
+        )
+
     # ---- Palworld REST API proxy ----
 
     GET_EPS = {"info", "players", "settings", "metrics"}
@@ -2871,6 +3681,32 @@ def build_app():
     @app.post("/api/saves/{guid}/activate")
     def saves_activate(guid: str, restart: bool = True, _: str = Depends(require("saves"))):
         return _envelope(activate_slot(guid, restart=restart))
+
+    # The version a save wants is part of the save, so it lives under /api/saves
+    # and inherits the `saves` permission -- pinning a world is a world decision,
+    # not a server-settings one. Applying it happens on activation (or via
+    # /api/update/apply for the world already running).
+    @app.get("/api/saves/{guid}/version")
+    def saves_version_get(guid: str, _: str = Depends(require("view"))):
+        want = slot_version(guid)
+        return {"ok": True, "error": None, **want, "installed": installed_version().get("buildid")}
+
+    @app.post("/api/saves/{guid}/version")
+    async def saves_version_set(guid: str, payload: dict | None = None, _: str = Depends(require("saves"))):
+        body = payload or {}
+        r = set_slot_version(
+            guid, str(body.get("mode") or "latest"), str(body.get("buildid") or "")
+        )
+        # Re-point the running server only when the pin applies to the live world
+        # and the caller asked for it.
+        if r.get("ok") and body.get("apply") and guid == get_active_world():
+            r["update"] = apply_update_async(
+                target=r.get("buildid") or "latest",
+                restart=True,
+                reason="pin",
+                force=bool(body.get("force")),
+            )
+        return _envelope(r)
 
     @app.post("/api/saves/{guid}/backup")
     def saves_backup(guid: str, _: str = Depends(require("saves"))):
@@ -3061,8 +3897,17 @@ def main():
     if cmd == "bootstrap":
         bootstrap()
         return
+    if cmd == "game-sync":
+        # Boot-time hook (startup.sh) and manual escape hatch: install whatever
+        # build the active save wants, synchronously, before the game starts.
+        r = reconcile_version(reason=sys.argv[2] if len(sys.argv) > 2 else "cli", blocking=True)
+        print(f"game-sync: {json.dumps(r)}")
+        return
     # Sampler + flush-on-SIGTERM. Only in serve mode; bootstrap just exits.
     start_stats_collector()
+    # Auto-update watcher: reconciles the install on every panel start (so a
+    # reboot self-heals a version drift) and re-checks Steam on an interval.
+    start_update_watcher()
 
     import uvicorn
 
