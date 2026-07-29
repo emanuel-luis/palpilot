@@ -3062,14 +3062,42 @@ def _depot_content_dirs(depot: str) -> list:
     return [os.path.join(r, rel) for r in roots]
 
 
+def _relevant_depots(target: dict) -> tuple:
+    """Narrow a build's depot set to the ones this install actually uses.
+
+    The public branch lists Steamworks redistributable depots (1004, 1005, …)
+    alongside the app's own. A dedicated-server install does not contain them --
+    this one has 1006 + 2394012 only -- so fetching them is wasted bandwidth at
+    best, and copying their contents over the install at worst. Reproduce the
+    shape we have, with the target build's newer manifests.
+
+    Returns (picked, skipped) so the caller can SAY what it left out."""
+    installed = installed_version().get("depots") or {}
+    if not installed:
+        return dict(target), {}
+    picked = {d: m for d, m in target.items() if d in installed}
+    skipped = {d: m for d, m in target.items() if d not in installed}
+    if not picked:
+        # Nothing in common (the build restructured its depots): take it whole
+        # rather than install nothing.
+        return dict(target), {}
+    return picked, skipped
+
+
 def _install_pinned(buildid: str) -> dict:
-    depots = _depots_for_build(buildid)
-    if not depots:
+    all_depots = _depots_for_build(buildid)
+    if not all_depots:
         return {
             "ok": False,
             "reason": "conflict",
             "error": f"no known depot manifests for build {buildid}",
         }
+    depots, skipped = _relevant_depots(all_depots)
+    if skipped:
+        print(
+            f"update: build {buildid}: installing depots {sorted(depots)}; "
+            f"skipping {sorted(skipped)} (not part of this install)"
+        )
     # download_depot stages a SECOND copy of the game under steamapps/content
     # before we move it into place, so a pinned install briefly needs about
     # twice the install size. The data disk is 40GB against a ~10GB game: refuse
@@ -3131,7 +3159,14 @@ def _install_pinned(buildid: str) -> dict:
     # Staging is several GB; don't leave it sitting on the data disk.
     shutil.rmtree(DEPOT_STAGE_HOME, ignore_errors=True)
     _mark_installed(buildid, depots, "pinned")
-    return {"ok": True, "error": None, "buildid": buildid, "log": "\n".join(log_parts)[-4000:]}
+    return {
+        "ok": True,
+        "error": None,
+        "buildid": buildid,
+        "depots": sorted(depots),
+        "skipped_depots": sorted(skipped),
+        "log": "\n".join(log_parts)[-4000:],
+    }
 
 
 def apply_update(
@@ -3214,9 +3249,16 @@ def apply_update(
                             "app_update_error": result.get("error"),
                         }
                     else:
+                        # Both paths failed: say both reasons. Reporting only the
+                        # app_update error hid the depot failure entirely.
                         result = {
                             **result,
                             "fallback_error": pinned.get("error"),
+                            "error": (
+                                f"{result.get('error')} | depot fallback also failed: "
+                                f"{pinned.get('error')}"
+                            ),
+                            "log": (pinned.get("log") or result.get("log") or ""),
                         }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
             result = {"ok": False, "reason": "conflict", "error": f"steamcmd failed: {e}"}
