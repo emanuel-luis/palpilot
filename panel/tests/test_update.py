@@ -166,6 +166,12 @@ class VersionState(unittest.TestCase):
         # suite stays runnable off-Linux.
         self._chown = panel._chown_steam
         panel._chown_steam = lambda *a, **k: None
+        # _update_job is module-level: reset it so one test's failed install
+        # can't leak into another's assertions.
+        panel._update_job.update(
+            {"state": "idle", "phase": "", "target": None, "reason": "",
+             "started": None, "finished": None, "error": None, "log": ""}
+        )
         os.makedirs(os.path.join(panel.SAVEGAMES_DIR, "WORLD1"))
         with open(panel.APPMANIFEST, "w", encoding="utf-8") as f:
             f.write(ACF)
@@ -309,6 +315,108 @@ class VersionState(unittest.TestCase):
             panel.apply_update = saved
         self.assertTrue(r["changed"])
         self.assertEqual(calls[0]["target"], "17000000")
+
+    # ---- install verification (the false-success bug) ----------------------
+    #
+    # steamcmd exits 0 on a failed update and only says so in its output, so
+    # these drive _install_latest with canned steamcmd results.
+
+    def _fake_steamcmd(self, out):
+        class R:
+            stdout = out
+            stderr = ""
+            returncode = 0
+
+        return lambda rest, timeout: R()
+
+    def _patch_install(self, steam_out, acf_build):
+        self._saved_run = panel._run_steamcmd
+        self._saved_acf = panel._read_appmanifest
+        self._saved_size = panel._install_size
+        self._saved_free = panel._free_bytes
+        self._saved_sleep = panel.time.sleep
+        panel._run_steamcmd = self._fake_steamcmd(steam_out)
+        panel._read_appmanifest = lambda: {"buildid": acf_build, "depots": {"2394011": "m"}, "updated": 1}
+        panel._install_size = lambda: 10 * 1024**3
+        panel._free_bytes = lambda: 100 * 1024**3
+        panel.time.sleep = lambda *_a: None
+
+    def _unpatch_install(self):
+        panel._run_steamcmd = self._saved_run
+        panel._read_appmanifest = self._saved_acf
+        panel._install_size = self._saved_size
+        panel._free_bytes = self._saved_free
+        panel.time.sleep = self._saved_sleep
+
+    def _set_latest(self, buildid):
+        meta = panel._load_update_meta()
+        meta["latest"] = {"buildid": buildid, "depots": {"2394011": "m"}, "checked": "x"}
+        panel._save_update_meta(meta)
+
+    def test_steamcmd_state_error_is_a_failure(self):
+        # The exact line the live server produced while reporting success.
+        self._set_latest("24370498")
+        self._patch_install(
+            "[  0%] Checking for available updates...\n"
+            "Error! App '2394010' state is 0x6 after update job.\n",
+            "24181105",
+        )
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["state"], "0x6")
+        self.assertEqual(r["buildid"], "24181105")  # honest about where we are
+        self.assertIn("24370498", r["error"])
+
+    def test_build_not_moving_is_a_failure_even_without_an_error_line(self):
+        self._set_latest("24370498")
+        self._patch_install("Success! App '2394010' fully installed.\n", "24181105")
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertFalse(r["ok"])
+        self.assertIn("still on build 24181105", r["error"])
+
+    def test_reaching_the_wanted_build_is_a_success(self):
+        self._set_latest("24370498")
+        self._patch_install("Success! App '2394010' fully installed.\n", "24370498")
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["buildid"], "24370498")
+        # Recorded in the marker. installed_version() still prefers the .acf for
+        # a non-pinned install, and this test's fixture .acf is untouched.
+        self.assertEqual(panel._load_update_meta()["installed"]["buildid"], "24370498")
+
+    def test_low_disk_refuses_before_running_steamcmd(self):
+        self._set_latest("24370498")
+        self._patch_install("should not run", "24181105")
+        panel._free_bytes = lambda: 1 * 1024**3  # 1 GiB against a 10 GiB install
+        calls = []
+        panel._run_steamcmd = lambda rest, timeout: calls.append(rest)
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertFalse(r["ok"])
+        self.assertIn("free space", r["error"])
+        self.assertEqual(calls, [])  # never even tried
+
+    def test_failed_install_is_reported_by_reconcile(self):
+        self._set_latest("24370498")
+        self._patch_install("Error! App '2394010' state is 0x6 after update job.\n", "24181105")
+        panel._service_active = lambda: False
+        try:
+            r = panel.reconcile_version(reason="test", blocking=True)
+        finally:
+            self._unpatch_install()
+        self.assertFalse(r["ok"])
+        self.assertEqual(panel.update_job()["state"], "error")
 
     def test_meta_survives_a_corrupt_file(self):
         with open(panel.UPDATE_META, "w", encoding="utf-8") as f:
