@@ -718,6 +718,26 @@ class VersionState(unittest.TestCase):
             panel.apply_update = saved
         self.assertEqual(len(calls), 1)
 
+    def test_a_denial_skips_the_depot_fallback_entirely(self):
+        # The depot path goes through the same account gate, so trying it after a
+        # denial only adds another denied request to the rate limit.
+        self._set_latest("24370498")
+        panel.clear_update_cooldown()
+        saved = (panel._install_latest, panel._install_pinned, panel._service_active,
+                 panel.get_active_world)
+        pinned_calls = []
+        panel._install_latest = lambda: {"ok": False, "denied": True, "error": "Access Denied"}
+        panel._install_pinned = lambda b: (pinned_calls.append(b), {"ok": False})[1]
+        panel._service_active = lambda: False
+        panel.get_active_world = lambda: ""
+        try:
+            r = panel.apply_update(target="latest", restart=False, reason="test")
+        finally:
+            (panel._install_latest, panel._install_pinned, panel._service_active,
+             panel.get_active_world) = saved
+        self.assertFalse(r["ok"])
+        self.assertEqual(pinned_calls, [])
+
     def test_expired_cooldown_is_ignored(self):
         meta = panel._load_update_meta()
         meta["cooldown"] = {"until": 1, "reason": "old", "at": "x"}
