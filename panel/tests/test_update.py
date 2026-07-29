@@ -397,6 +397,37 @@ class SteamAccountLogin(unittest.TestCase):
         self.assertTrue(panel.steam_account()["logged_in"])
         self.assertEqual(panel.update_cooldown(), {})  # a licensed session unblocks us
 
+    def test_success_wins_over_the_guard_banner(self):
+        # THE bug the console hit: steamcmd prints the Steam Guard banner on the
+        # way to a SUCCESSFUL code login, so classifying the banner first
+        # reported a working sign-in as a rejected code and never stored it.
+        self._reply(
+            "Logging in user 'acct' to Steam Public...\n"
+            "This account is protected by a Steam Guard mobile authenticator.\n"
+            "Logged in OK\n"
+            "Waiting for user info...OK\n"
+        )
+        r = panel.steam_login(code="ABC12")
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(panel.steam_account()["logged_in"])
+
+    def test_push_approval_timeout_is_its_own_answer(self):
+        # Verbatim shape from the live run: an authenticator account gets a push
+        # prompt, not a code prompt, so "submit a code" is the wrong advice.
+        self._reply(
+            "Logging in user 'acct' [U:1:0] to Steam Public...\n"
+            "This account is protected by a Steam Guard mobile authenticator.\n"
+            "Please confirm the login in the Steam Mobile app on your phone.\n"
+            "Waiting for confirmation...\nWaiting for confirmation...\n"
+            "Wait for confirmation timed out.Timed out waiting for confirmation.\n"
+            "ERROR (Timeout)\n"
+        )
+        r = panel.steam_login()
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["push_required"])
+        self.assertIn("approve", r["error"].lower())
+        self.assertFalse(panel.steam_account()["logged_in"])
+
     def test_guard_required_is_its_own_answer(self):
         self._reply("Steam Guard code required to complete login\n")
         r = panel.steam_login()
