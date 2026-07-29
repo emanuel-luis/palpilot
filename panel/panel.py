@@ -3337,7 +3337,10 @@ def apply_update(
             # same manifests works fine. So when we know the target build's
             # manifests, fall back to installing it depot-by-depot rather than
             # leaving the server stale.
-            if want == "latest" and not result.get("ok"):
+            # `denied` means Steam refused at the account layer. The depot path
+            # goes through the same gate, so trying it only adds another denied
+            # request to the rate limit that caused this.
+            if want == "latest" and not result.get("ok") and not result.get("denied"):
                 fallback_build = latest_version().get("buildid") or ""
                 if fallback_build and _depots_for_build(fallback_build):
                     _job_set(phase=f"installing build {fallback_build} depot-by-depot")
