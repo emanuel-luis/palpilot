@@ -130,9 +130,15 @@ resource "google_storage_bucket_object" "panel_py" {
   bucket = google_storage_bucket.palworld_panel.name
   source = "${path.module}/panel/panel.py"
 
-  # Uploads iniciais só; atualizações posteriores via gsutil não são revertidas.
+  # Uploads iniciais só; atualizações posteriores via gsutil/CI não são revertidas.
+  #
+  # `all`, not [source, detect_md5hash]: CI overwrites these objects with
+  # `gcloud storage cp`, which bumps generation and makes the provider mark the
+  # content hashes unknown. Ignoring only the trigger left an in-place update on
+  # EVERY plan (`terraform apply` never reached "No changes"), and applying it
+  # just re-uploaded the repo copy over CI's. Create-once is the actual contract.
   lifecycle {
-    ignore_changes = [source, detect_md5hash]
+    ignore_changes = all
   }
 }
 
@@ -141,8 +147,9 @@ resource "google_storage_bucket_object" "panel_html" {
   bucket = google_storage_bucket.palworld_panel.name
   source = "${path.module}/panel/index.html"
 
+  # Same create-once contract as panel.py above (see the note there).
   lifecycle {
-    ignore_changes = [source, detect_md5hash]
+    ignore_changes = all
   }
 }
 
