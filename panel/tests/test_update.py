@@ -9,6 +9,7 @@ fixture or drives the pure metadata helpers against temp files.
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -230,6 +231,102 @@ class RelevantDepots(unittest.TestCase):
         picked, skipped = panel._relevant_depots({"2394099": "z"})
         self.assertEqual(picked, {"2394099": "z"})
         self.assertEqual(skipped, {})
+
+
+class PinnedInstallSafety(unittest.TestCase):
+    """A pinned/depot install must be all-or-nothing.
+
+    Prod hit the bad case: depot 1006 downloaded, 2394012 was refused. Copying
+    each depot as it arrived would have left the install a mix of new and old
+    depot contents -- broken, from an update that reported failure."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.install = os.path.join(self.tmp, "Steam")
+        os.makedirs(self.install)
+        with open(os.path.join(self.install, "marker.txt"), "w", encoding="utf-8") as f:
+            f.write("original")
+        self._saved = {k: getattr(panel, k) for k in ("STEAM_DIR", "DEPOT_STAGE_HOME", "UPDATE_META")}
+        panel.STEAM_DIR = self.install
+        panel.DEPOT_STAGE_HOME = os.path.join(self.tmp, "stage")
+        panel.UPDATE_META = os.path.join(self.tmp, "update.json")
+        self._saved_fns = (panel._run_steamcmd, panel._chown_steam, panel._install_size,
+                           panel._free_bytes, panel._depots_for_build, panel.installed_version,
+                           panel._merge_into_install)
+        # Production merges with `cp -a` (mode preservation + merge semantics);
+        # stand in a pure-python merge so the suite runs off-Linux too.
+        def merge(src):
+            for root, _dirs, files in os.walk(src):
+                rel = os.path.relpath(root, src)
+                dest = self.install if rel == "." else os.path.join(self.install, rel)
+                os.makedirs(dest, exist_ok=True)
+                for n in files:
+                    shutil.copy2(os.path.join(root, n), os.path.join(dest, n))
+
+        panel._merge_into_install = merge
+        panel._chown_steam = lambda *a, **k: None
+        panel._install_size = lambda: 1024
+        panel._free_bytes = lambda: 10 * 1024**3
+        panel._depots_for_build = lambda b: {"1006": "m1", "2394012": "m2"}
+        panel.installed_version = lambda: {"depots": {"1006": "old", "2394012": "old"}}
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(panel, k, v)
+        (panel._run_steamcmd, panel._chown_steam, panel._install_size,
+         panel._free_bytes, panel._depots_for_build, panel.installed_version,
+         panel._merge_into_install) = self._saved_fns
+
+    def test_a_refused_depot_leaves_the_install_untouched(self):
+        def fake_run(rest, timeout, home=""):
+            depot = rest[2]
+
+            class R:
+                stderr = ""
+                returncode = 0
+
+            if depot == "1006":
+                # Stage a file that must NOT reach the install.
+                d = os.path.join(home, "content", "depot_1006")
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, "marker.txt"), "w", encoding="utf-8") as f:
+                    f.write("NEW")
+                R.stdout = f'Depot download complete : "{d}" (manifest m1)\n'
+            else:
+                R.stdout = "Depot download failed : missing license for depot (No subscription)\n"
+            return R()
+
+        panel._run_steamcmd = fake_run
+        r = panel._install_pinned("24370498")
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["unlicensed"])
+        self.assertEqual(r["depot"], "2394012")
+        self.assertIn("Nothing was changed", r["error"])
+        with open(os.path.join(self.install, "marker.txt"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "original")  # never half-updated
+
+    def test_all_depots_ok_installs_and_marks(self):
+        def fake_run(rest, timeout, home=""):
+            depot = rest[2]
+            d = os.path.join(home, "content", f"depot_{depot}")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, f"{depot}.txt"), "w", encoding="utf-8") as f:
+                f.write("new")
+
+            class R:
+                stdout = f'Depot download complete : "{d}" (manifest x)\n'
+                stderr = ""
+                returncode = 0
+
+            return R()
+
+        panel._run_steamcmd = fake_run
+        r = panel._install_pinned("24370498")
+        self.assertTrue(r["ok"], r)
+        for depot in ("1006", "2394012"):
+            self.assertTrue(os.path.exists(os.path.join(self.install, f"{depot}.txt")))
+        self.assertEqual(panel._load_update_meta()["installed"]["buildid"], "24370498")
+        self.assertFalse(os.path.isdir(panel.DEPOT_STAGE_HOME))  # staging cleaned up
 
 
 class SteamcmdHome(unittest.TestCase):

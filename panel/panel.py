@@ -2483,6 +2483,10 @@ _update_job = {
     "finished": None,
     "error": None,
     "log": "",
+    # True when Steam refused to license the depot rather than failing to fetch
+    # it: a different problem, with a different (non-)remedy.
+    "unlicensed": False,
+    "steam_logs": None,
 }
 
 
@@ -3030,6 +3034,11 @@ def _install_latest() -> dict:
 # first version guessed at roots, missed the real one (the steamcmd install dir),
 # and reported "did not download" for a depot that had downloaded perfectly.
 _DEPOT_DONE_RE = re.compile(r'Depot download complete\s*:\s*"([^"]+)"')
+# Steam declining to hand over content, as opposed to any transport failure:
+#   Depot download failed : missing license for depot (No subscription)
+# This is not something a retry or a cache clear can fix, so it must be named
+# rather than folded into a generic "did not download".
+_NO_LICENSE_RE = re.compile(r"missing license for depot|No subscription", re.IGNORECASE)
 
 # Staging root for download_depot, on the data disk (see _run_steamcmd's `home`).
 DEPOT_STAGE_HOME = os.environ.get("DEPOT_STAGE_HOME", f"{STEAM_DIR}/.steamcmd-stage")
@@ -3084,6 +3093,17 @@ def _relevant_depots(target: dict) -> tuple:
     return picked, skipped
 
 
+def _merge_into_install(src: str) -> None:
+    """Merge a staged depot tree over the live install.
+
+    `cp -a`, not tar or a python copytree: it preserves modes (PalServer.sh must
+    stay executable) and merges into an existing tree, which copytree refuses to
+    do. Its own seam so the install step is stub-able off-Linux."""
+    subprocess.run(
+        ["cp", "-a", f"{src}/.", f"{STEAM_DIR}/"], check=True, capture_output=True
+    )
+
+
 def _install_pinned(buildid: str) -> dict:
     all_depots = _depots_for_build(buildid)
     if not all_depots:
@@ -3118,6 +3138,12 @@ def _install_pinned(buildid: str) -> dict:
     os.makedirs(DEPOT_STAGE_HOME, exist_ok=True)
     _chown_steam(DEPOT_STAGE_HOME)
     log_parts = []
+    # TWO phases, deliberately: download every depot first, and only copy into
+    # the live install once all of them are on disk. Copying as each one arrived
+    # meant a failure partway (exactly what happened in prod: 1006 fine, 2394012
+    # refused) left the install a MIX of new and old depot contents -- a broken
+    # server, from a failed update that had promised to change nothing.
+    staged = {}
     for depot, manifest in sorted(depots.items()):
         _job_set(phase=f"downloading depot {depot}")
         r = _run_steamcmd(
@@ -3133,20 +3159,28 @@ def _install_pinned(buildid: str) -> dict:
             (d for d in _depot_content_dirs(depot) if os.path.isdir(d)), ""
         )
         if not src:
+            shutil.rmtree(DEPOT_STAGE_HOME, ignore_errors=True)
+            unlicensed = bool(_NO_LICENSE_RE.search(out))
             return {
                 "ok": False,
                 "reason": "conflict",
-                "error": f"depot {depot} manifest {manifest} did not download",
+                "error": (
+                    f"Steam refused depot {depot} for build {buildid}: no license for "
+                    "this depot on an anonymous account (Steam said 'missing license "
+                    "for depot (No subscription)'). Nothing was changed."
+                    if unlicensed
+                    else f"depot {depot} manifest {manifest} did not download. Nothing was changed."
+                ),
+                "unlicensed": unlicensed,
+                "depot": depot,
                 "log": "\n".join(log_parts)[-4000:],
             }
+        staged[depot] = src
+
+    # All depots present: now swap them in.
+    for depot, src in sorted(staged.items()):
         _job_set(phase=f"installing depot {depot}")
-        # cp -a, not tar/rsync: preserves modes (PalServer.sh must stay
-        # executable) and neither rsync nor a python copytree merge is
-        # guaranteed present/atomic here.
-        subprocess.run(
-            ["cp", "-a", f"{src}/.", f"{STEAM_DIR}/"], check=True, capture_output=True
-        )
-        shutil.rmtree(src, ignore_errors=True)
+        _merge_into_install(src)
     # download_depot can land the launcher without the exec bit.
     for rel in ("PalServer.sh", "Pal/Binaries/Linux/PalServer-Linux-Shipping"):
         p = os.path.join(STEAM_DIR, rel)
@@ -3254,6 +3288,7 @@ def apply_update(
                         result = {
                             **result,
                             "fallback_error": pinned.get("error"),
+                            "fallback_unlicensed": bool(pinned.get("unlicensed")),
                             "error": (
                                 f"{result.get('error')} | depot fallback also failed: "
                                 f"{pinned.get('error')}"
@@ -3273,6 +3308,11 @@ def apply_update(
             finished=_timestamp(),
             error=result.get("error"),
             log=result.get("log", "")[-4000:],
+            # Steam declining to license the depot is a different class of
+            # failure from a transport error: no retry fixes it, and the console
+            # should say so instead of implying the server is broken.
+            unlicensed=bool(result.get("unlicensed") or result.get("fallback_unlicensed")),
+            steam_logs=result.get("steam_logs"),
         )
         meta = _load_update_meta()
         meta["last_run"] = {
