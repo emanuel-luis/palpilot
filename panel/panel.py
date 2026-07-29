@@ -2864,7 +2864,6 @@ _STEAM_STATE_RE = re.compile(r"Error!\s+App\s+'?\d+'?\s+state is (0x[0-9a-fA-F]+
 # Steam writes the new files alongside the old ones before swapping, so an
 # in-place update needs headroom on top of the installed size.
 UPDATE_FREE_MARGIN = float(os.environ.get("UPDATE_FREE_MARGIN", "0.35"))
-UPDATE_ATTEMPTS = int(os.environ.get("UPDATE_ATTEMPTS", "3"))
 
 
 def _install_size() -> int:
@@ -2876,6 +2875,56 @@ def _free_bytes() -> int:
         return shutil.disk_usage(STEAM_DIR).free
     except OSError:
         return -1
+
+
+def _steam_log_tail(name: str, limit: int = 2000) -> str:
+    """Tail one of Steam's own logs. `state is 0x6` on stdout says only "I gave
+    up"; content_log.txt says WHY (no subscription, manifest unavailable, disk,
+    a depot it won't touch), so a failure report without it is unactionable."""
+    path = os.path.join(STEAM_DIR, "logs", name)
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            if size > limit:
+                f.seek(size - limit)
+            return f.read()[-limit:]
+    except OSError:
+        return ""
+
+
+# Escalating steamcmd strategies. Palworld's public branch can leave a client
+# with a stale appinfo cache convinced an update is due while resolving nothing
+# to download (the 0/0 progress + 0x6 signature), and a half-written
+# steamapps/downloading tree does the same. Each strategy is reported by name so
+# the logs say which one actually worked.
+def _steam_clear_appinfo() -> None:
+    for rel in (
+        os.path.join("appcache", "appinfo.vdf"),
+        os.path.join("appcache", "packageinfo.vdf"),
+    ):
+        _safe_remove(os.path.join(os.path.expanduser("~"), "Steam", rel))
+        _safe_remove(os.path.join(STEAM_DIR, rel))
+
+
+def _steam_clear_downloading() -> None:
+    for base in (STEAM_DIR, os.path.join(os.path.expanduser("~"), "Steam")):
+        shutil.rmtree(
+            os.path.join(base, "steamapps", "downloading", STEAM_APP_ID), ignore_errors=True
+        )
+        shutil.rmtree(os.path.join(base, "steamapps", "temp"), ignore_errors=True)
+
+
+_UPDATE_STRATEGIES = (
+    # (name, pre-hook NAME, extra steamcmd verbs before +app_update). The hook is
+    # named rather than referenced so it resolves at call time -- a tuple of
+    # function objects would capture the originals and ignore any later
+    # reassignment (which is also what makes this testable without touching
+    # Steam's real cache dirs).
+    ("plain", None, []),
+    ("refresh-appinfo", None, ["+app_info_update", "1"]),
+    ("clear-appinfo", "_steam_clear_appinfo", ["+app_info_update", "1"]),
+    ("clear-downloading", "_steam_clear_downloading", ["+app_info_update", "1"]),
+)
 
 
 def _install_latest() -> dict:
@@ -2904,14 +2953,23 @@ def _install_latest() -> dict:
             "free_bytes": free,
         }
 
-    # steamcmd is flaky on a cold run (it self-updates first and can bail with
-    # "Missing configuration"), which is why startup.sh retries the install too.
+    # Retrying the SAME command is not enough -- the live server failed three
+    # identical times with 0/0 progress. So each attempt escalates: refresh
+    # appinfo, then clear the appinfo cache, then clear a half-written
+    # downloading tree. A plain retry stays first because the cold-run flake
+    # (steamcmd self-updating and re-execing) is real and costs nothing to cover.
     log = ""
     state = None
     acf = {}
-    for attempt in range(1, UPDATE_ATTEMPTS + 1):
-        _job_set(phase=f"installing (steamcmd attempt {attempt})")
-        r = _run_steamcmd(["+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT)
+    tried = []
+    for name, pre, extra in _UPDATE_STRATEGIES:
+        tried.append(name)
+        _job_set(phase=f"installing ({name})")
+        if pre is not None:
+            globals()[pre]()
+        r = _run_steamcmd(
+            [*extra, "+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT
+        )
         log = ((r.stdout or "") + (r.stderr or ""))[-4000:]
         m = _STEAM_STATE_RE.search(log)
         state = m.group(1) if m else None
@@ -2923,7 +2981,8 @@ def _install_latest() -> dict:
                 "error": None,
                 "buildid": acf["buildid"],
                 "previous": before,
-                "attempts": attempt,
+                "strategy": name,
+                "tried": tried,
                 "log": log,
             }
         time.sleep(5)
@@ -2935,13 +2994,19 @@ def _install_latest() -> dict:
         "ok": False,
         "reason": "conflict",
         "error": (
-            f"update to build {want or 'latest'} failed after {UPDATE_ATTEMPTS} attempts: "
+            f"update to build {want or 'latest'} failed; tried {', '.join(tried)}: "
             f"{detail}. Free space: {free // 1024**2 if free >= 0 else '?'} MiB."
         ),
         "buildid": acf.get("buildid") or before,
         "state": state,
         "free_bytes": free,
+        "tried": tried,
         "log": log,
+        # Steam's own diagnosis, which is the only place the real cause appears.
+        "steam_logs": {
+            "content_log": _steam_log_tail("content_log.txt"),
+            "stderr": _steam_log_tail("stderr.txt", 800),
+        },
     }
 
 

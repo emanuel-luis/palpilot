@@ -120,8 +120,12 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   i.e. "an update is due and I didn't apply it"). It also commonly fails on the first invocation after it
   self-updates and re-execs — which is why `startup.sh` retries the initial install 5×. So an install is only
   successful if the appmanifest's buildid actually became the wanted build AND no `state is 0x…` line was printed;
-  `_install_latest()` verifies both and retries `UPDATE_ATTEMPTS` times. A live server shipped stale precisely
-  because the first version of that function only checked "an appmanifest exists" and reported `ok: true`.
+  `_install_latest()` verifies both. A live server shipped stale precisely because the first version of that
+  function only checked "an appmanifest exists" and reported `ok: true`. Retrying the same command is not enough
+  either (prod failed 3× identically with `progress: 0.00 (0 / 0)`), so attempts ESCALATE via `_UPDATE_STRATEGIES`:
+  plain → `+app_info_update 1` → clear `appcache/appinfo.vdf` → clear `steamapps/downloading/<appid>`. The winning
+  strategy is reported, and a failure carries the tail of Steam's own `logs/content_log.txt`, which is the only
+  place the real cause is written.
 - **Game version is agent-owned:** policy + observed-build history live in `palworld-update.json` on the data disk,
   the wanted build per save lives in the slot metadata (`version: {mode, buildid}`), and `reconcile_version()` is the
   single entry point (boot via `panel.py game-sync`, panel start-up thread, save activate/restore, interval, or
