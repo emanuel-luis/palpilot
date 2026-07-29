@@ -197,6 +197,41 @@ class DepotStagingPath(unittest.TestCase):
         self.assertTrue(any(panel.DEPOT_STAGE_HOME in c for c in cands), cands)
 
 
+class RelevantDepots(unittest.TestCase):
+    """Which of a build's depots this install should actually fetch.
+
+    Prod's public branch lists Steamworks redistributable depots (1004, 1005)
+    that a dedicated-server install does not contain; fetching them wasted a
+    download and then failed the whole install."""
+
+    def setUp(self):
+        self._saved = panel.installed_version
+
+    def tearDown(self):
+        panel.installed_version = self._saved
+
+    def test_narrows_to_the_installed_depot_set(self):
+        panel.installed_version = lambda: {"depots": {"1006": "old", "2394012": "old"}}
+        picked, skipped = panel._relevant_depots(
+            {"1004": "a", "1005": "b", "1006": "c", "2394011": "d", "2394012": "e"}
+        )
+        self.assertEqual(picked, {"1006": "c", "2394012": "e"})  # new manifests
+        self.assertEqual(sorted(skipped), ["1004", "1005", "2394011"])
+
+    def test_takes_everything_when_nothing_is_installed(self):
+        panel.installed_version = lambda: {"depots": {}}
+        picked, skipped = panel._relevant_depots({"1004": "a", "2394012": "e"})
+        self.assertEqual(picked, {"1004": "a", "2394012": "e"})
+        self.assertEqual(skipped, {})
+
+    def test_takes_everything_when_the_build_restructured_depots(self):
+        # No overlap at all: installing nothing would be worse than installing all.
+        panel.installed_version = lambda: {"depots": {"999": "old"}}
+        picked, skipped = panel._relevant_depots({"2394099": "z"})
+        self.assertEqual(picked, {"2394099": "z"})
+        self.assertEqual(skipped, {})
+
+
 class SteamcmdHome(unittest.TestCase):
     def test_home_override_is_passed_to_the_subprocess(self):
         seen = {}
