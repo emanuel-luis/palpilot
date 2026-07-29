@@ -2765,7 +2765,13 @@ def _run_steamcmd(rest: list, timeout: int, home: str = "", code: str = ""):
     not carry over. Defaults to STEAMCMD_HOME for exactly that reason."""
     env = dict(os.environ)
     env["HOME"] = home or STEAMCMD_HOME
-    os.makedirs(env["HOME"], exist_ok=True)
+    try:
+        os.makedirs(env["HOME"], exist_ok=True)
+    except OSError:
+        # Not fatal here: steamcmd reports an unusable HOME far better than a
+        # traceback out of this helper would, and off-VM (tests, a dev box) the
+        # path may simply not be creatable.
+        pass
     return subprocess.run(
         _steamcmd_cmd(rest, code=code),
         capture_output=True,
@@ -3255,8 +3261,6 @@ UPDATE_DENIED_COOLDOWN = int(os.environ.get("UPDATE_DENIED_COOLDOWN", str(6 * 36
 # Those two facts interact: cleanup must remove only the staged CONTENT, never
 # the whole directory, or every depot download would silently sign us out.
 STEAMCMD_HOME = os.environ.get("STEAMCMD_HOME", f"{STEAM_DIR}/.steamcmd-home")
-# Kept as an alias: older deploys set this name.
-DEPOT_STAGE_HOME = STEAMCMD_HOME
 
 
 def _depot_dir_from_log(log: str, depot: str) -> str:
@@ -3274,9 +3278,9 @@ def _depot_content_dirs(depot: str) -> list:
     rel = os.path.join("steamapps", "content", f"app_{STEAM_APP_ID}", f"depot_{depot}")
     home = os.path.expanduser("~")
     roots = [
-        DEPOT_STAGE_HOME,
-        os.path.join(DEPOT_STAGE_HOME, ".local", "share", "Steam", "steamcmd", "linux32"),
-        os.path.join(DEPOT_STAGE_HOME, ".local", "share", "Steam", "steamcmd"),
+        STEAMCMD_HOME,
+        os.path.join(STEAMCMD_HOME, ".local", "share", "Steam", "steamcmd", "linux32"),
+        os.path.join(STEAMCMD_HOME, ".local", "share", "Steam", "steamcmd"),
         os.path.join(home, ".local", "share", "Steam", "steamcmd", "linux32"),
         os.path.join(home, ".local", "share", "Steam", "steamcmd"),
         STEAM_DIR,
@@ -3363,8 +3367,8 @@ def _install_pinned(buildid: str) -> dict:
                 f"{free // 1024**2} MiB free, ~{need // 1024**2} MiB needed"
             ),
         }
-    os.makedirs(DEPOT_STAGE_HOME, exist_ok=True)
-    _chown_steam(DEPOT_STAGE_HOME)
+    os.makedirs(STEAMCMD_HOME, exist_ok=True)
+    _chown_steam(STEAMCMD_HOME)
     log_parts = []
     # TWO phases, deliberately: download every depot first, and only copy into
     # the live install once all of them are on disk. Copying as each one arrived
@@ -3377,7 +3381,7 @@ def _install_pinned(buildid: str) -> dict:
         r = _run_steamcmd(
             ["+download_depot", STEAM_APP_ID, depot, manifest],
             timeout=UPDATE_TIMEOUT,
-            home=DEPOT_STAGE_HOME,
+            home=STEAMCMD_HOME,
         )
         out = _scrub((r.stdout or "") + (r.stderr or ""))
         log_parts.append(out[-1500:])
@@ -3387,7 +3391,9 @@ def _install_pinned(buildid: str) -> dict:
             (d for d in _depot_content_dirs(depot) if os.path.isdir(d)), ""
         )
         if not src:
-            shutil.rmtree(DEPOT_STAGE_HOME, ignore_errors=True)
+            # Staged content only -- rmtree of the whole HOME here would delete
+            # the cached Steam session and re-trigger Steam Guard.
+            _clear_depot_staging()
             unlicensed = bool(_NO_LICENSE_RE.search(out))
             return {
                 "ok": False,
