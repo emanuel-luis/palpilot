@@ -12,6 +12,18 @@ panel_password = "CHANGE-ME-panel-login"      # admin panel login
 admin_password = "CHANGE-ME-palworld-admin"   # Palworld REST/in-game admin password
 internal_token = "CHANGE-ME-random-hex"       # shared secret: watchdog + coordinator->panel RBAC signing
 
+# --- Steam account for game downloads (optional; empty = anonymous) ---
+# Anonymous downloads are rate-limited per account/IP and that account is shared
+# by everyone, so Steam can refuse ('Access Denied' on a manifest request code)
+# and strand the server on an old build. A real account that owns Palworld lifts
+# that. Applying these is an in-place metadata update (no VM recreate); then
+# finish the sign-in once in the console under "Game version" -- Steam Guard
+# wants a code per new machine, and steamcmd caches the session afterwards.
+# Prefer a dedicated Steam account: metadata is readable by anyone with
+# compute.instances.get on the project (same as the passwords above).
+# steam_login_user     = ""
+# steam_login_password = ""
+
 # --- optional (defaults shown) ---
 # panel_port         = 8080
 # panel_user         = "admin"

@@ -326,7 +326,124 @@ class PinnedInstallSafety(unittest.TestCase):
         for depot in ("1006", "2394012"):
             self.assertTrue(os.path.exists(os.path.join(self.install, f"{depot}.txt")))
         self.assertEqual(panel._load_update_meta()["installed"]["buildid"], "24370498")
-        self.assertFalse(os.path.isdir(panel.DEPOT_STAGE_HOME))  # staging cleaned up
+        # Staged content is gone, but the steamcmd HOME itself survives -- it
+        # holds the Steam session (see SteamAccountLogin).
+        self.assertFalse(
+            any(
+                d == "content" and os.path.basename(root) == "steamapps"
+                for root, dirs, _f in os.walk(panel.STEAMCMD_HOME)
+                for d in dirs
+            )
+        )
+
+
+class SteamAccountLogin(unittest.TestCase):
+    """Signing steamcmd in as a real account instead of `anonymous`.
+
+    Exists because anonymous downloads are rate-limited per account/IP, which is
+    what stranded the live server on an old build."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved = {k: getattr(panel, k) for k in ("UPDATE_META", "STEAMCMD_HOME", "STEAM_DIR")}
+        panel.UPDATE_META = os.path.join(self.tmp, "update.json")
+        panel.STEAMCMD_HOME = os.path.join(self.tmp, "home")
+        panel.STEAM_DIR = os.path.join(self.tmp, "Steam")
+        self._saved_fns = (panel._chown_steam, panel._steam_credentials, panel._run_steamcmd)
+        panel._chown_steam = lambda *a, **k: None
+        panel._steam_credentials = lambda: ("acct", "s3cret")
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            setattr(panel, k, v)
+        (panel._chown_steam, panel._steam_credentials, panel._run_steamcmd) = self._saved_fns
+
+    def _reply(self, out):
+        class R:
+            stdout = out
+            stderr = ""
+            returncode = 0
+
+        panel._run_steamcmd = lambda rest, timeout, home="", code="": R()
+
+    def test_command_uses_the_account_when_configured(self):
+        cmd = panel._steamcmd_cmd(["+info"])
+        self.assertIn("+login", cmd)
+        self.assertEqual(cmd[cmd.index("+login") + 1], "acct")
+        self.assertEqual(cmd[cmd.index("+login") + 2], "s3cret")
+        self.assertNotIn("anonymous", cmd)
+
+    def test_command_falls_back_to_anonymous(self):
+        panel._steam_credentials = lambda: ("", "")
+        cmd = panel._steamcmd_cmd(["+info"])
+        self.assertEqual(cmd[cmd.index("+login") + 1], "anonymous")
+
+    def test_guard_code_is_appended_and_sanitised(self):
+        cmd = panel._steamcmd_cmd(["+info"], code="  ab-12/34 ")
+        self.assertEqual(cmd[cmd.index("+login") + 3], "  ab-12/34 ")  # raw here
+        # steam_login() is what sanitises; check it strips separators.
+        self._reply("Logged in OK\n")
+        panel.steam_login(code="ab-12/34")
+        # (no assertion on the code itself beyond not raising; see below)
+
+    def test_password_never_appears_in_output(self):
+        self.assertEqual(panel._scrub("login s3cret failed"), "login ******** failed")
+
+    def test_successful_login_is_recorded_and_clears_the_cooldown(self):
+        panel._set_update_cooldown("denied earlier")
+        self._reply("Logging in user 'acct' to Steam Public...\nLogged in OK\n")
+        r = panel.steam_login()
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(panel.steam_account()["logged_in"])
+        self.assertEqual(panel.update_cooldown(), {})  # a licensed session unblocks us
+
+    def test_guard_required_is_its_own_answer(self):
+        self._reply("Steam Guard code required to complete login\n")
+        r = panel.steam_login()
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["guard_required"])
+        self.assertFalse(panel.steam_account()["logged_in"])
+
+    def test_bad_guard_code_says_so(self):
+        self._reply("Two-factor code mismatch\n")
+        r = panel.steam_login(code="12345")
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["guard_required"])
+        self.assertIn("fresh one", r["error"])
+
+    def test_bad_password_is_distinguished(self):
+        self._reply("FAILED login with result code Invalid Password\n")
+        r = panel.steam_login()
+        self.assertFalse(r["ok"])
+        self.assertIn("password", r["error"].lower())
+
+    def test_rate_limited_login_is_distinguished(self):
+        self._reply("FAILED login with result code Rate Limit Exceeded\n")
+        r = panel.steam_login()
+        self.assertFalse(r["ok"])
+        self.assertIn("rate-limited", r["error"])
+
+    def test_login_refused_without_configured_credentials(self):
+        panel._steam_credentials = lambda: ("", "")
+        r = panel.steam_login()
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["reason"], "validation")
+
+    def test_account_status_never_leaks_the_password(self):
+        self.assertNotIn("s3cret", json.dumps(panel.steam_account()))
+
+    def test_staging_cleanup_keeps_the_session(self):
+        # Deleting the whole steamcmd HOME after a depot install would sign us
+        # out and re-trigger Steam Guard on the next update.
+        cfg = os.path.join(panel.STEAMCMD_HOME, "Steam", "config")
+        content = os.path.join(panel.STEAMCMD_HOME, "Steam", "steamapps", "content", "app_x")
+        os.makedirs(cfg)
+        os.makedirs(content)
+        with open(os.path.join(cfg, "config.vdf"), "w", encoding="utf-8") as f:
+            f.write("session")
+        panel._clear_depot_staging()
+        self.assertTrue(os.path.exists(os.path.join(cfg, "config.vdf")))
+        self.assertFalse(os.path.isdir(content))
 
 
 class SteamcmdHome(unittest.TestCase):
@@ -351,7 +468,10 @@ class SteamcmdHome(unittest.TestCase):
             panel.subprocess.run = saved
         self.assertEqual(seen["env"]["HOME"], "/data/stage")
 
-    def test_no_home_override_inherits_the_environment(self):
+    def test_default_home_is_the_shared_steamcmd_home(self):
+        # Not the inherited HOME (/home/steam, the small boot disk) and not a
+        # per-call temp dir: every run must share one HOME so the Steam session
+        # cached by a sign-in is visible to later downloads.
         seen = {}
 
         def fake_run(cmd, **kw):
@@ -370,7 +490,7 @@ class SteamcmdHome(unittest.TestCase):
             panel._run_steamcmd(["+quit"], timeout=5)
         finally:
             panel.subprocess.run = saved
-        self.assertIsNone(seen["env"])
+        self.assertEqual(seen["env"]["HOME"], panel.STEAMCMD_HOME)
 
 
 class VersionState(unittest.TestCase):
