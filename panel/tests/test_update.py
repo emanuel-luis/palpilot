@@ -678,6 +678,52 @@ class VersionState(unittest.TestCase):
         self.assertEqual(r["steam_logs"]["content_log"], "<content_log.txt>")
         self.assertEqual(r["tried"], ["plain", "refresh-appinfo", "clear-appinfo", "clear-downloading"])
 
+    def test_access_denied_stops_early_and_sets_a_cooldown(self):
+        # Steam's real refusal, from content_log.txt. Every strategy would fail
+        # the same way, and each extra try feeds the rate limit -- so stop.
+        self._set_latest("24370498")
+        self._patch_install("Error! App '2394010' state is 0x6 after update job.\n", "24181105")
+        calls = []
+        inner = panel._run_steamcmd
+        panel._run_steamcmd = lambda rest, timeout, home="": (calls.append(rest), inner(rest, timeout))[1]
+        panel._steam_log_tail = lambda name, limit=2000: (
+            "CDepotDownloadMgr::BYldRequestDepotManifest(App: 2394010, Depot: 2394012): "
+            "Failed to get manifest request code, 'Access Denied'\n"
+            if name == "content_log.txt" else ""
+        )
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["denied"])
+        self.assertEqual(r["tried"], ["plain"])  # did NOT keep hammering
+        self.assertEqual(len(calls), 1)
+        self.assertIn("Access Denied", r["error"])
+        cd = panel.update_cooldown()
+        self.assertGreater(cd["remaining"], 0)
+
+    def test_reconcile_respects_the_cooldown_but_force_overrides(self):
+        self._set_latest("24370498")
+        panel._set_update_cooldown("test")
+        r = panel.reconcile_version(reason="test", blocking=True)
+        self.assertEqual(r["skipped"], "cooldown")
+        # An operator pressing the button is not the automatic path.
+        calls = []
+        saved = panel.apply_update
+        panel.apply_update = lambda **kw: (calls.append(kw), {"ok": True, "changed": True})[1]
+        try:
+            panel.reconcile_version(reason="test", blocking=True, force=True)
+        finally:
+            panel.apply_update = saved
+        self.assertEqual(len(calls), 1)
+
+    def test_expired_cooldown_is_ignored(self):
+        meta = panel._load_update_meta()
+        meta["cooldown"] = {"until": 1, "reason": "old", "at": "x"}
+        panel._save_update_meta(meta)
+        self.assertEqual(panel.update_cooldown(), {})
+
     def test_low_disk_refuses_before_running_steamcmd(self):
         self._set_latest("24370498")
         self._patch_install("should not run", "24181105")

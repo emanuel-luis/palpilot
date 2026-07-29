@@ -140,9 +140,20 @@ export function UpdatesSection() {
             <div className="field-hint">{t("updates.behind", { buildid: target })}</div>
           ) : null}
           {pinned && <div className="field-hint">{t("updates.pinnedNotice", { buildid: target || "" })}</div>}
-          {job.state === "error" && job.error && (
+          {/* A Steam-side refusal is not a broken server, and saying "update
+              failed" would send someone debugging the wrong thing. */}
+          {job.state === "error" && d.cooldown?.remaining ? (
+            <div className="field-hint">
+              {t("updates.steamDenied", { hours: Math.max(1, Math.round(d.cooldown.remaining / 3600)) })}
+            </div>
+          ) : job.state === "error" && job.error ? (
             <div className="field-hint">{t("updates.jobFailed", { error: String(job.error) })}</div>
-          )}
+          ) : null}
+          {job.state !== "error" && d.cooldown?.remaining ? (
+            <div className="field-hint">
+              {t("updates.cooldownActive", { hours: Math.max(1, Math.round(d.cooldown.remaining / 3600)) })}
+            </div>
+          ) : null}
           {d.latest?.error && <div className="field-hint">{String(d.latest.error)}</div>}
 
           <div className="row-tight">

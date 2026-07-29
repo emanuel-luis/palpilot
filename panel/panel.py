@@ -2747,6 +2747,37 @@ def latest_version(refresh: bool = False) -> dict:
     return latest
 
 
+def _set_update_cooldown(why: str) -> None:
+    """Stop trying for a while, and record why.
+
+    Persisted (not in-memory) so an agent restart -- which triggers a reconcile
+    on start -- cannot reset the backoff and resume hammering Steam."""
+    meta = _load_update_meta()
+    meta["cooldown"] = {
+        "until": int(time.time()) + UPDATE_DENIED_COOLDOWN,
+        "reason": why,
+        "at": _timestamp(),
+    }
+    _save_update_meta(meta)
+
+
+def update_cooldown() -> dict:
+    """Remaining backoff, or {} once it has expired."""
+    cd = _load_update_meta().get("cooldown")
+    if not isinstance(cd, dict) or not cd.get("until"):
+        return {}
+    remaining = int(cd["until"]) - int(time.time())
+    if remaining <= 0:
+        return {}
+    return {**cd, "remaining": remaining}
+
+
+def clear_update_cooldown() -> None:
+    meta = _load_update_meta()
+    if meta.pop("cooldown", None) is not None:
+        _save_update_meta(meta)
+
+
 def known_builds() -> list:
     """Builds this server can still (re)install, newest first."""
     meta = _load_update_meta()
@@ -2990,6 +3021,28 @@ def _install_latest() -> dict:
         m = _STEAM_STATE_RE.search(log)
         state = m.group(1) if m else None
         acf = _read_appmanifest()
+        # Steam denied us content: stop here. The remaining strategies cannot
+        # help, and each extra try feeds the rate limit that caused this.
+        content_log = _steam_log_tail("content_log.txt")
+        if _MANIFEST_DENIED_RE.search(content_log) or _MANIFEST_DENIED_RE.search(log):
+            _set_update_cooldown("Steam denied the manifest request")
+            return {
+                "ok": False,
+                "reason": "conflict",
+                "denied": True,
+                "error": (
+                    f"Steam refused to serve build {want or 'latest'}: 'Access Denied' when "
+                    "requesting the depot manifest code for an anonymous account. This is "
+                    "Steam-side (manifest request codes are rate-limited per account/IP), not "
+                    f"a problem with the server, which stays on build {acf.get('buildid') or before}. "
+                    f"Backing off for {UPDATE_DENIED_COOLDOWN // 3600}h before retrying."
+                ),
+                "buildid": acf.get("buildid") or before,
+                "state": state,
+                "tried": tried,
+                "log": log,
+                "steam_logs": {"content_log": content_log, "stderr": _steam_log_tail("stderr.txt", 800)},
+            }
         if not state and acf.get("buildid") and (want is None or acf["buildid"] == want):
             _mark_installed(acf["buildid"], acf.get("depots") or {}, "latest")
             return {
@@ -3039,6 +3092,19 @@ _DEPOT_DONE_RE = re.compile(r'Depot download complete\s*:\s*"([^"]+)"')
 # This is not something a retry or a cache clear can fix, so it must be named
 # rather than folded into a generic "did not download".
 _NO_LICENSE_RE = re.compile(r"missing license for depot|No subscription", re.IGNORECASE)
+# Steam refusing content at the account layer, before any transfer:
+#   CDepotDownloadMgr::BYldRequestDepotManifest(App: 2394010, Depot: 2394012,
+#     Manifest: …): Failed to get manifest request code, 'Access Denied'
+#   AppID 2394010 update canceled : Failed downloading 1 manifests (No connection)
+# Manifest request codes are rate-limited per account/IP, and an anonymous
+# account is shared by the world. Every strategy fails identically while this
+# holds, so continuing to try is both pointless AND part of the problem -- it is
+# how a retry loop turns a throttle into a longer throttle.
+_MANIFEST_DENIED_RE = re.compile(
+    r"Failed to get manifest request code|Access Denied", re.IGNORECASE
+)
+# How long to leave Steam alone after it denies us.
+UPDATE_DENIED_COOLDOWN = int(os.environ.get("UPDATE_DENIED_COOLDOWN", str(6 * 3600)))
 
 # Staging root for download_depot, on the data disk (see _run_steamcmd's `home`).
 DEPOT_STAGE_HOME = os.environ.get("DEPOT_STAGE_HOME", f"{STEAM_DIR}/.steamcmd-stage")
@@ -3325,6 +3391,7 @@ def apply_update(
         _save_update_meta(meta)
         if not result.get("ok"):
             return result
+        clear_update_cooldown()  # Steam is serving us again
         return {**result, "changed": True, "restarted": started, "previous": installed.get("buildid")}
     finally:
         _update_lock.release()
@@ -3383,6 +3450,11 @@ def reconcile_version(reason: str = "boot", force: bool = False, blocking: bool 
     }
     if want["mode"] == "latest" and not policy["auto_update"]:
         return {**out, "skipped": "auto_update_off"}
+    # Steam told us to go away; respect it. `force` (an operator pressing the
+    # button) may still try -- this only governs the automatic paths.
+    cooldown = update_cooldown()
+    if cooldown and not force:
+        return {**out, "skipped": "cooldown", "cooldown": cooldown}
     if not want.get("buildid"):
         return {**out, "skipped": "unknown_target"}
     if installed.get("buildid") == want["buildid"]:
@@ -3458,6 +3530,8 @@ def version_status() -> dict:
         # Surfaced because a full data disk is the usual reason an update refuses
         # or fails: Steam stages the new files before swapping them in.
         "disk": {"free": _free_bytes(), "install": _install_size()},
+        # Present while we are deliberately not retrying (Steam denied us).
+        "cooldown": update_cooldown(),
     }
 
 

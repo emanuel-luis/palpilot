@@ -342,6 +342,8 @@ const en = {
     jobFailed: "Last update failed: {error}",
     jobDone: "Update finished at {when}.",
     playersOnline: "Players are connected — updating would disconnect them.",
+    steamDenied: "Steam is refusing to serve this build to this server right now (anonymous downloads are rate-limited). Your server is fine and stays on the installed build; the next attempt is in {hours}h.",
+    cooldownActive: "Waiting {hours}h before asking Steam again.",
     builds: "Reinstallable builds",
     buildsHint: "Steam only serves the current build, so a save can be pinned to a build this server has actually seen. Older builds cannot be recovered.",
     noBuilds: "No builds recorded yet.",
