@@ -148,6 +148,99 @@ class VdfParse(unittest.TestCase):
         self.assertEqual(info["depots"], {})
 
 
+class DepotStagingPath(unittest.TestCase):
+    """Locating what `download_depot` staged.
+
+    The live server hit this: the depot downloaded perfectly and the install was
+    reported as "did not download", because steamcmd stages under its OWN install
+    dir (not force_install_dir) and prints the path with Windows separators."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.depot_dir = os.path.join(
+            self.tmp, "steamcmd", "linux32", "steamapps", "content", "app_2394010", "depot_1004"
+        )
+        os.makedirs(self.depot_dir)
+
+    def test_parses_the_printed_path_with_backslashes(self):
+        # Verbatim shape from the live log, with the real temp base spliced in.
+        base = os.path.join(self.tmp, "steamcmd", "linux32").replace("\\", "/")
+        log = (
+            "Downloading depot 1004 (8 files, 21 MB) ...\n"
+            f'Depot download complete : "{base}\\steamapps\\content\\app_2394010\\depot_1004"'
+            " (manifest 5612541580377302256)\n"
+        )
+        found = panel._depot_dir_from_log(log, "1004")
+        self.assertTrue(found, "should have parsed the staged depot path")
+        self.assertTrue(os.path.isdir(found))
+        self.assertTrue(found.endswith("depot_1004"))
+
+    def test_ignores_a_path_for_a_different_depot(self):
+        base = os.path.join(self.tmp, "steamcmd", "linux32").replace("\\", "/")
+        log = f'Depot download complete : "{base}\\steamapps\\content\\app_2394010\\depot_1004"\n'
+        self.assertEqual(panel._depot_dir_from_log(log, "2394012"), "")
+
+    def test_ignores_a_path_that_does_not_exist(self):
+        log = 'Depot download complete : "/nope/steamapps/content/app_2394010/depot_1004"\n'
+        self.assertEqual(panel._depot_dir_from_log(log, "1004"), "")
+
+    def test_no_completion_line_yields_nothing(self):
+        self.assertEqual(panel._depot_dir_from_log("Error! Download failed.\n", "1004"), "")
+
+    def test_fallback_roots_include_the_steamcmd_install_dir(self):
+        # The root that was missing is what made a successful download look failed.
+        cands = panel._depot_content_dirs("1004")
+        self.assertTrue(
+            any(os.path.join(".local", "share", "Steam", "steamcmd") in c for c in cands),
+            cands,
+        )
+        self.assertTrue(any(panel.DEPOT_STAGE_HOME in c for c in cands), cands)
+
+
+class SteamcmdHome(unittest.TestCase):
+    def test_home_override_is_passed_to_the_subprocess(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen.update(kw)
+
+            class R:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return R()
+
+        saved = panel.subprocess.run
+        panel.subprocess.run = fake_run
+        try:
+            panel._run_steamcmd(["+quit"], timeout=5, home="/data/stage")
+        finally:
+            panel.subprocess.run = saved
+        self.assertEqual(seen["env"]["HOME"], "/data/stage")
+
+    def test_no_home_override_inherits_the_environment(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen.update(kw)
+
+            class R:
+                stdout = ""
+                stderr = ""
+                returncode = 0
+
+            return R()
+
+        saved = panel.subprocess.run
+        panel.subprocess.run = fake_run
+        try:
+            panel._run_steamcmd(["+quit"], timeout=5)
+        finally:
+            panel.subprocess.run = saved
+        self.assertIsNone(seen["env"])
+
+
 class VersionState(unittest.TestCase):
     """installed/latest/pin resolution, all against temp sidecar files."""
 

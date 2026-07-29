@@ -2686,13 +2686,25 @@ def _steamcmd_cmd(rest: list) -> list:
     return args + rest + ["+quit"]
 
 
-def _run_steamcmd(rest: list, timeout: int):
+def _run_steamcmd(rest: list, timeout: int, home: str = ""):
+    """Run steamcmd. `home` overrides HOME for this call only.
+
+    That override exists for `download_depot`, which ignores force_install_dir
+    and stages under the steamcmd install dir beneath HOME. HOME is
+    /home/steam, i.e. the 20GB BOOT disk, while the game and the free-space
+    check live on the 40GB data disk mounted at /home/steam/Steam -- staging
+    several GB there would fill the boot disk while the preflight looked fine."""
+    env = None
+    if home:
+        env = dict(os.environ)
+        env["HOME"] = home
     return subprocess.run(
         _steamcmd_cmd(rest),
         capture_output=True,
         text=True,
         timeout=timeout,
         errors="replace",
+        env=env,
     )
 
 
@@ -3010,13 +3022,43 @@ def _install_latest() -> dict:
     }
 
 
+# steamcmd announces where it put a depot -- with WINDOWS separators, even on
+# Linux:
+#   Depot download complete : "/home/steam/.local/share/Steam/steamcmd/linux32\
+#   steamapps\content\app_2394010\depot_1004" (manifest 5612541580377302256)
+# Trusting this line is the only reliable way to locate the staged files; the
+# first version guessed at roots, missed the real one (the steamcmd install dir),
+# and reported "did not download" for a depot that had downloaded perfectly.
+_DEPOT_DONE_RE = re.compile(r'Depot download complete\s*:\s*"([^"]+)"')
+
+# Staging root for download_depot, on the data disk (see _run_steamcmd's `home`).
+DEPOT_STAGE_HOME = os.environ.get("DEPOT_STAGE_HOME", f"{STEAM_DIR}/.steamcmd-stage")
+
+
+def _depot_dir_from_log(log: str, depot: str) -> str:
+    """The staged path steamcmd printed for `depot`, normalised to POSIX."""
+    for raw in _DEPOT_DONE_RE.findall(log or ""):
+        path = raw.replace("\\", "/")
+        if path.rstrip("/").endswith(f"depot_{depot}") and os.path.isdir(path):
+            return path
+    return ""
+
+
 def _depot_content_dirs(depot: str) -> list:
-    """Where `download_depot` may have dropped the files. It does not honour
-    force_install_dir consistently across steamcmd builds, so check the known
-    roots rather than assuming one."""
+    """Fallback locations, used only if steamcmd printed no usable path. It does
+    not honour force_install_dir, and which root it picks varies by build."""
     rel = os.path.join("steamapps", "content", f"app_{STEAM_APP_ID}", f"depot_{depot}")
     home = os.path.expanduser("~")
-    roots = [STEAM_DIR, os.path.join(home, "Steam"), os.path.join(home, ".steam", "steamcmd")]
+    roots = [
+        DEPOT_STAGE_HOME,
+        os.path.join(DEPOT_STAGE_HOME, ".local", "share", "Steam", "steamcmd", "linux32"),
+        os.path.join(DEPOT_STAGE_HOME, ".local", "share", "Steam", "steamcmd"),
+        os.path.join(home, ".local", "share", "Steam", "steamcmd", "linux32"),
+        os.path.join(home, ".local", "share", "Steam", "steamcmd"),
+        STEAM_DIR,
+        os.path.join(home, "Steam"),
+        os.path.join(home, ".steam", "steamcmd"),
+    ]
     return [os.path.join(r, rel) for r in roots]
 
 
@@ -3045,14 +3087,23 @@ def _install_pinned(buildid: str) -> dict:
                 f"{free // 1024**2} MiB free, ~{need // 1024**2} MiB needed"
             ),
         }
+    os.makedirs(DEPOT_STAGE_HOME, exist_ok=True)
+    _chown_steam(DEPOT_STAGE_HOME)
     log_parts = []
     for depot, manifest in sorted(depots.items()):
         _job_set(phase=f"downloading depot {depot}")
         r = _run_steamcmd(
-            ["+download_depot", STEAM_APP_ID, depot, manifest], timeout=UPDATE_TIMEOUT
+            ["+download_depot", STEAM_APP_ID, depot, manifest],
+            timeout=UPDATE_TIMEOUT,
+            home=DEPOT_STAGE_HOME,
         )
-        log_parts.append(((r.stdout or "") + (r.stderr or ""))[-1500:])
-        src = next((d for d in _depot_content_dirs(depot) if os.path.isdir(d)), "")
+        out = (r.stdout or "") + (r.stderr or "")
+        log_parts.append(out[-1500:])
+        # steamcmd's own "Depot download complete" line first; guessed roots only
+        # as a fallback.
+        src = _depot_dir_from_log(out, depot) or next(
+            (d for d in _depot_content_dirs(depot) if os.path.isdir(d)), ""
+        )
         if not src:
             return {
                 "ok": False,
@@ -3077,6 +3128,8 @@ def _install_pinned(buildid: str) -> dict:
             except OSError:
                 pass
     _chown_steam(STEAM_DIR, recursive=False)
+    # Staging is several GB; don't leave it sitting on the data disk.
+    shutil.rmtree(DEPOT_STAGE_HOME, ignore_errors=True)
     _mark_installed(buildid, depots, "pinned")
     return {"ok": True, "error": None, "buildid": buildid, "log": "\n".join(log_parts)[-4000:]}
 
@@ -3144,6 +3197,27 @@ def apply_update(
         _job_set(phase="installing" if want == "latest" else f"installing build {want}")
         try:
             result = _install_latest() if want == "latest" else _install_pinned(want)
+            # `app_update` can refuse to move at all (prod: every strategy hit
+            # `state is 0x6` with 0/0 progress) while `download_depot` of the very
+            # same manifests works fine. So when we know the target build's
+            # manifests, fall back to installing it depot-by-depot rather than
+            # leaving the server stale.
+            if want == "latest" and not result.get("ok"):
+                fallback_build = latest_version().get("buildid") or ""
+                if fallback_build and _depots_for_build(fallback_build):
+                    _job_set(phase=f"installing build {fallback_build} depot-by-depot")
+                    pinned = _install_pinned(fallback_build)
+                    if pinned.get("ok"):
+                        result = {
+                            **pinned,
+                            "strategy": "download_depot-fallback",
+                            "app_update_error": result.get("error"),
+                        }
+                    else:
+                        result = {
+                            **result,
+                            "fallback_error": pinned.get("error"),
+                        }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
             result = {"ok": False, "reason": "conflict", "error": f"steamcmd failed: {e}"}
         started = False
