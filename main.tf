@@ -274,6 +274,13 @@ resource "google_compute_instance" "palworld" {
     admin-password = var.admin_password
     rest-api-port  = tostring(var.rest_api_port)
 
+    # Steam account for game downloads (optional; empty = anonymous, unchanged).
+    # Read LIVE by panel.py off the metadata server rather than through a
+    # systemd Environment=, so wiring an account up is an in-place metadata
+    # update -- no VM recreate, no startup.sh edit. See var.steam_login_user.
+    steam-login-user     = var.steam_login_user
+    steam-login-password = var.steam_login_password
+
     # Dual-mode server runtime (opt-in, see var.runtime_mode in
     # variables.tf and docs/FRONTEND_V2_PLAN.md "Runtime dual-mode").
     # Default "native" reproduces today's behavior unchanged. startup.sh

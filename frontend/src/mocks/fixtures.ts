@@ -61,6 +61,12 @@ function seed() {
       ],
       job: { state: "idle" as string, phase: "", target: null as string | null, reason: "", started: null as string | null, finished: null as string | null, error: null as string | null, log: "" },
       last_run: null as any,
+      cooldown: {} as any,
+      // Configured-but-not-signed-in: the state that shows the Steam Guard form.
+      steam_account: {
+        configured: true, user: "palpilot-downloads", mode: "account",
+        logged_in: false, logged_in_at: null as string | null,
+      },
     },
     backups: {
       "world-a": [

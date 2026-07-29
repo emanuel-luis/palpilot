@@ -34,6 +34,38 @@ variable "admin_password" {
   sensitive   = true
 }
 
+# --- Steam account for game downloads (optional) ---------------------------
+#
+# Empty (the default) keeps `steamcmd +login anonymous`, which is what this
+# server has always used. Anonymous downloads are rate-limited per account/IP
+# and that account is shared by the whole internet, so Steam can answer
+# 'Access Denied' on a manifest request code and leave the server stuck on an
+# old build with no way to update. Setting a real account that owns Palworld
+# lifts that limit.
+#
+# These land in INSTANCE METADATA, which the agent reads live -- so adding or
+# rotating them is an in-place apply, NOT a VM recreate (unlike anything that
+# touches startup.sh). After the first apply, complete the sign-in once from the
+# console (Game version -> Steam account): Steam Guard requires a code per new
+# machine, and steamcmd caches the session on the data disk afterwards.
+#
+# Caveat worth knowing: metadata is readable by anyone with compute.instances.get
+# on the project, exactly like panel_password/admin_password today. Prefer a
+# dedicated Steam account (one that owns the game) over your main one, and set
+# enable_secret_manager if you want the other secrets out of metadata too.
+variable "steam_login_user" {
+  description = "Steam account name for steamcmd downloads. Empty = anonymous (default)."
+  type        = string
+  default     = ""
+}
+
+variable "steam_login_password" {
+  description = "Password for steam_login_user. Empty = anonymous (default)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "rest_api_port" {
   description = "Palworld REST API port (localhost only, proxied by the panel)."
   type        = number
