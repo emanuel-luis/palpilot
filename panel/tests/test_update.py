@@ -335,6 +335,12 @@ class VersionState(unittest.TestCase):
         self._saved_size = panel._install_size
         self._saved_free = panel._free_bytes
         self._saved_sleep = panel.time.sleep
+        # The escalating strategies touch Steam's cache/downloading dirs; stub
+        # them so the suite never writes outside its temp dir.
+        self._saved_hooks = (panel._steam_clear_appinfo, panel._steam_clear_downloading)
+        self._saved_tail = panel._steam_log_tail
+        panel._steam_clear_appinfo = lambda: None
+        panel._steam_clear_downloading = lambda: None
         panel._run_steamcmd = self._fake_steamcmd(steam_out)
         panel._read_appmanifest = lambda: {"buildid": acf_build, "depots": {"2394011": "m"}, "updated": 1}
         panel._install_size = lambda: 10 * 1024**3
@@ -342,6 +348,8 @@ class VersionState(unittest.TestCase):
         panel.time.sleep = lambda *_a: None
 
     def _unpatch_install(self):
+        panel._steam_clear_appinfo, panel._steam_clear_downloading = self._saved_hooks
+        panel._steam_log_tail = self._saved_tail
         panel._run_steamcmd = self._saved_run
         panel._read_appmanifest = self._saved_acf
         panel._install_size = self._saved_size
@@ -392,6 +400,58 @@ class VersionState(unittest.TestCase):
         # Recorded in the marker. installed_version() still prefers the .acf for
         # a non-pinned install, and this test's fixture .acf is untouched.
         self.assertEqual(panel._load_update_meta()["installed"]["buildid"], "24370498")
+
+    def test_strategies_escalate_and_report_which_one_worked(self):
+        # The live failure repeated identically, so a plain retry is not enough:
+        # later attempts must actually change something (refresh/clear caches).
+        self._set_latest("24370498")
+        self._patch_install("", "24181105")
+        seen = []
+        builds = {"cur": "24181105"}
+
+        class R:
+            stdout = "Error! App '2394010' state is 0x6 after update job.\n"
+            stderr = ""
+            returncode = 0
+
+        class OK:
+            stdout = "Success! App '2394010' fully installed.\n"
+            stderr = ""
+            returncode = 0
+
+        def fake_run(rest, timeout):
+            seen.append(rest)
+            # Succeed only once the appinfo cache has been cleared.
+            if cleared["appinfo"]:
+                builds["cur"] = "24370498"
+                return OK()
+            return R()
+
+        cleared = {"appinfo": False}
+        panel._run_steamcmd = fake_run
+        panel._steam_clear_appinfo = lambda: cleared.__setitem__("appinfo", True)
+        panel._read_appmanifest = lambda: {"buildid": builds["cur"], "depots": {"2394011": "m"}, "updated": 1}
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["strategy"], "clear-appinfo")
+        self.assertEqual(r["tried"], ["plain", "refresh-appinfo", "clear-appinfo"])
+        # The 2nd attempt onward must ask Steam to refresh appinfo.
+        self.assertIn("+app_info_update", seen[1])
+        self.assertNotIn("+app_info_update", seen[0])
+
+    def test_failure_carries_steam_own_logs(self):
+        self._set_latest("24370498")
+        self._patch_install("Error! App '2394010' state is 0x6 after update job.\n", "24181105")
+        panel._steam_log_tail = lambda name, limit=2000: f"<{name}>"
+        try:
+            r = panel._install_latest()
+        finally:
+            self._unpatch_install()
+        self.assertEqual(r["steam_logs"]["content_log"], "<content_log.txt>")
+        self.assertEqual(r["tried"], ["plain", "refresh-appinfo", "clear-appinfo", "clear-downloading"])
 
     def test_low_disk_refuses_before_running_steamcmd(self):
         self._set_latest("24370498")
