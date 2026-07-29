@@ -195,7 +195,7 @@ class DepotStagingPath(unittest.TestCase):
             any(os.path.join(".local", "share", "Steam", "steamcmd") in c for c in cands),
             cands,
         )
-        self.assertTrue(any(panel.DEPOT_STAGE_HOME in c for c in cands), cands)
+        self.assertTrue(any(panel.STEAMCMD_HOME in c for c in cands), cands)
 
 
 class RelevantDepots(unittest.TestCase):
@@ -246,9 +246,9 @@ class PinnedInstallSafety(unittest.TestCase):
         os.makedirs(self.install)
         with open(os.path.join(self.install, "marker.txt"), "w", encoding="utf-8") as f:
             f.write("original")
-        self._saved = {k: getattr(panel, k) for k in ("STEAM_DIR", "DEPOT_STAGE_HOME", "UPDATE_META")}
+        self._saved = {k: getattr(panel, k) for k in ("STEAM_DIR", "STEAMCMD_HOME", "UPDATE_META")}
         panel.STEAM_DIR = self.install
-        panel.DEPOT_STAGE_HOME = os.path.join(self.tmp, "stage")
+        panel.STEAMCMD_HOME = os.path.join(self.tmp, "stage")
         panel.UPDATE_META = os.path.join(self.tmp, "update.json")
         self._saved_fns = (panel._run_steamcmd, panel._chown_steam, panel._install_size,
                            panel._free_bytes, panel._depots_for_build, panel.installed_version,
@@ -447,6 +447,18 @@ class SteamAccountLogin(unittest.TestCase):
 
 
 class SteamcmdHome(unittest.TestCase):
+    """HOME handling. Uses temp dirs because _run_steamcmd really does create the
+    directory -- pointing these at /home/steam or /data passed on Windows and
+    failed on Linux CI with PermissionError."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._saved_home = panel.STEAMCMD_HOME
+        panel.STEAMCMD_HOME = os.path.join(self.tmp, "steamcmd-home")
+
+    def tearDown(self):
+        panel.STEAMCMD_HOME = self._saved_home
+
     def test_home_override_is_passed_to_the_subprocess(self):
         seen = {}
 
@@ -463,10 +475,11 @@ class SteamcmdHome(unittest.TestCase):
         saved = panel.subprocess.run
         panel.subprocess.run = fake_run
         try:
-            panel._run_steamcmd(["+quit"], timeout=5, home="/data/stage")
+            override = os.path.join(self.tmp, "override")
+            panel._run_steamcmd(["+quit"], timeout=5, home=override)
         finally:
             panel.subprocess.run = saved
-        self.assertEqual(seen["env"]["HOME"], "/data/stage")
+        self.assertEqual(seen["env"]["HOME"], override)
 
     def test_default_home_is_the_shared_steamcmd_home(self):
         # Not the inherited HOME (/home/steam, the small boot disk) and not a
