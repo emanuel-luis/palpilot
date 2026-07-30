@@ -70,6 +70,21 @@ resource "google_compute_instance_iam_member" "coordinator_vm_ops" {
   instance_name = google_compute_instance.palworld.name
   role          = google_project_iam_custom_role.coordinator_vm_ops.id
   member        = "serviceAccount:${google_service_account.coordinator.email}"
+
+  # THIS is what keeps the console's power buttons working across a VM replace.
+  #
+  # The binding lives in the INSTANCE's IAM policy, and a replaced instance comes
+  # up with an empty policy. But this resource's id is keyed by instance NAME,
+  # which does not change -- so Terraform sees no drift, plans nothing, and the
+  # coordinator silently loses compute.instances.start. The symptom is the
+  # console failing to power the VM on with everything else looking healthy; it
+  # has now happened on both recreates.
+  #
+  # replace_triggered_by re-creates the binding whenever the instance is
+  # replaced, which is the only signal that matters here.
+  lifecycle {
+    replace_triggered_by = [google_compute_instance.palworld]
+  }
 }
 
 # Coordenador lê/grava users.json no bucket do painel

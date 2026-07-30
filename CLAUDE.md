@@ -58,11 +58,16 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   (it disconnects players). The persistent data disk survives, the boot disk does not.
   Ordinary `metadata` entries (e.g. `coordinator-url`) ARE in-place and take effect on the next boot — those two
   cases are different, which is easy to conflate.
-- ⚠️ **`startup.sh` is currently DRIFTED from the state**: it changed in `2819148` (2026-07-17), and again for the
-  game-version boot hook (`panel.py game-sync`, 2026-07-29), with no apply since, so an untargeted `terraform apply` will replace the VM even if you changed nothing. Until that is
-  reconciled in a maintenance window, deploy infra with `-target`, e.g.
-  `terraform apply -target=google_cloud_run_v2_service.coordinator`. Check `terraform plan` for
-  `must be replaced` on `google_compute_instance.palworld` before every apply.
+- `startup.sh` drift was reconciled by a VM replace on 2026-07-30 (boot disk erased, dependencies reinstalled, data
+  disk intact); `terraform plan` is clean again. Still check a plan for `must be replaced` on
+  `google_compute_instance.palworld` before every apply — that is a maintenance-window action, never a routine one.
+- **A VM replace silently drops the console's power permission.** `google_compute_instance_iam_member.coordinator_vm_ops`
+  lives in the INSTANCE's IAM policy, which comes up empty on a new instance, but its Terraform id is keyed by
+  instance NAME — unchanged — so Terraform sees no drift and plans nothing. Symptom: everything looks healthy but the
+  console can't power the VM on (the SA lost `compute.instances.start`). It bit both recreates before
+  `lifecycle { replace_triggered_by = [google_compute_instance.palworld] }` was added. Verify after any replace with
+  `gcloud compute instances get-iam-policy palworld-tf-vm --zone <zone>`; an empty `{"etag": …}` means the binding is
+  gone.
 
 ## Hard constraints — do not break
 
