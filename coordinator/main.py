@@ -533,6 +533,43 @@ def _vm_stop():
         return False
 
 
+# Values that must never appear in a log we hand to a browser. The coordinator
+# holds them anyway (it signs with them / proxies with them), so it is the right
+# place to redact: the serial console is raw VM output and nobody audits every
+# line startup.sh or a crashing unit might print.
+def _redact(text):
+    # Only what the coordinator actually holds: the panel password it proxies
+    # with and the token it signs with. Values of 3 chars or fewer are skipped --
+    # redacting those would shred unrelated output for no benefit.
+    for secret in (PANEL_PASSWORD, INTERNAL_TOKEN):
+        if secret and len(secret) > 3:
+            text = text.replace(secret, "********")
+    return text
+
+
+def _vm_serial(start=0):
+    """Serial console output (port 1), from byte offset `start`.
+
+    This is where the VM's boot story lives: the startup-script echoes, systemd
+    unit transitions, the game-version reconcile, and PalServer's own stdout.
+    The agent cannot serve any of that -- reading the journal would need a
+    sudoers/startup.sh change (see CLAUDE.md), and the interesting moments are
+    exactly when the agent is not answering yet.
+
+    GCP returns `next` as the offset to poll from, so a client tails by feeding
+    the previous `next` back in. Output older than the ring buffer is dropped by
+    GCP, which is what `start` moving forward on its own indicates."""
+    r = _inst.get_serial_port_output(
+        project=PROJECT_ID, zone=VM_ZONE, instance=VM_INSTANCE, port=1, start=start
+    )
+    return {
+        "contents": _redact(r.contents or ""),
+        # Proto field is `next` -> `next_` in the Python client.
+        "start": int(getattr(r, "start", 0) or 0),
+        "next": int(getattr(r, "next_", 0) or 0),
+    }
+
+
 def _rbac_headers(user):
     """Signed RBAC-propagation headers for a proxied call (H1). Empty if there's no
     acting user (shouldn't happen post-auth) or no shared token to sign with."""
@@ -755,6 +792,33 @@ def _h_vm_status(request, user, path, method):
         return _json({"ok": False, "error": "status check failed", "status": "UNKNOWN"}, 500)
 
 
+def _h_vm_serial(request, user, path, method):
+    """GET /api/vm/serial?start=N -> the VM's boot/system log.
+
+    Never fails the request just because the log is unavailable: a TERMINATED
+    instance answers "resource is not ready" from GCP, and "the VM is off" is a
+    normal state to render, not an error (same reasoning as the vm_offline
+    sentinel the proxied routes return)."""
+    try:
+        start = max(0, int(request.args.get("start") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    try:
+        status = _vm_status()
+    except Exception as e:  # noqa: BLE001
+        print(f"vm status check failed (vm/serial): {e}")
+        status = "UNKNOWN"
+    if status != "RUNNING":
+        return _ok({"contents": "", "start": start, "next": start, "vm_status": status, "available": False})
+    try:
+        out = _vm_serial(start)
+    except Exception as e:  # noqa: BLE001
+        # Mid-boot the port can briefly refuse; report it as "nothing yet".
+        print(f"serial port read failed: {e}")
+        return _ok({"contents": "", "start": start, "next": start, "vm_status": status, "available": False})
+    return _ok({**out, "vm_status": status, "available": True})
+
+
 def _h_vm_start(request, user, path, method):
     if not _vm_start():
         return _err("failed to start VM", 502)
@@ -910,6 +974,10 @@ ROUTES = [
     (None, _users_path, "users", _h_users),
     (None, _roles_path, "users", _h_roles),
     ("GET", _exact("/api/vm/status"), "view", _h_vm_status),
+    # VM boot/system log (serial console). Coordinator-owned, not proxied: it has
+    # to work while the VM is booting or off, which is when the agent cannot
+    # answer. Read-only -> `view`, like the game logs.
+    ("GET", _exact("/api/vm/serial"), "view", _h_vm_serial),
     ("POST", _exact("/api/vm/start"), "power", _h_vm_start),
     ("POST", _exact("/api/vm/stop"), "power", _h_vm_stop),
     # config (PalWorldSettings.ini) proxy

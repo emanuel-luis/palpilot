@@ -232,4 +232,127 @@ export function useLogStream(enabled: boolean, intervalMs = 3000, capacity = 400
   };
 }
 
+// ------------------------------------------------------- boot / system log
+//
+// GET /api/vm/serial is coordinator-owned, not proxied to the agent: the whole
+// point is to see the boot BEFORE the agent is answering (and to read the last
+// boot while the VM is off). So this never reports `offline` the way the game log
+// does — it reports `available: false` plus the VM state, which is information,
+// not a failure.
+
+type SerialResponse = {
+  contents: string;
+  start: number;
+  next: number;
+  vm_status: string;
+  available: boolean;
+};
+
+export type BootLogStream = LogStream & { vmStatus: string; available: boolean; gap: boolean };
+
+export function useBootLogStream(enabled: boolean, intervalMs = 4000, capacity = 4000): BootLogStream {
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [vmStatus, setVmStatus] = useState("");
+  const [available, setAvailable] = useState(false);
+  const [gap, setGap] = useState(false);
+
+  const nextRef = useRef(0);
+  const seqRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef(false);
+
+  const clear = useCallback(() => {
+    setLines([]);
+    setGap(false);
+    // Deliberately NOT resetting the offset: the log on the VM is untouched, so
+    // clearing the view then re-fetching everything would contradict the button.
+  }, []);
+
+  const poll = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    try {
+      const q = new URLSearchParams({ start: String(nextRef.current) });
+      const r = await apiGet<any>("/api/vm/serial", { query: q.toString() });
+      if (!r.ok) {
+        setError(r.error || "serial_read_failed");
+        return;
+      }
+      setError(null);
+      const d = r.data as SerialResponse;
+      setVmStatus(d.vm_status || "");
+      setAvailable(!!d.available);
+
+      // GCP's serial buffer is a ring: if it dropped output we asked for, the
+      // returned `start` is ahead of our offset. Say so rather than presenting a
+      // seamless log with a silent hole in it.
+      if (typeof d.start === "number" && d.start > nextRef.current && nextRef.current > 0) setGap(true);
+
+      if (d.contents) {
+        const incoming = d.contents.replace(/\r/g, "").split("\n");
+        // A chunk can end mid-line; drop the trailing empty from a clean split.
+        if (incoming.length && incoming[incoming.length - 1] === "") incoming.pop();
+        if (incoming.length) {
+          setLines((prev) => {
+            const add = incoming.map((text) => ({ id: seqRef.current++, text }));
+            const merged = prev.concat(add);
+            return merged.length > capacity ? merged.slice(merged.length - capacity) : merged;
+          });
+        }
+      }
+      if (typeof d.next === "number") nextRef.current = d.next;
+    } catch {
+      setError("network_error");
+    } finally {
+      inFlightRef.current = false;
+      setLoading(false);
+    }
+  }, [capacity]);
+
+  useEffect(() => {
+    if (!enabled || paused) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    setLoading(nextRef.current === 0);
+
+    const tick = async () => {
+      await poll();
+      if (cancelled) return;
+      timerRef.current = setTimeout(tick, intervalMs);
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+    };
+  }, [enabled, paused, poll, intervalMs]);
+
+  const text = useCallback(() => lines.map((l) => l.text).join("\n"), [lines]);
+
+  return {
+    lines,
+    files: [],
+    file: "serial console",
+    paused,
+    offline: false,
+    error,
+    loading,
+    setPaused,
+    selectFile: () => {},
+    clear,
+    text,
+    vmStatus,
+    available,
+    gap,
+  };
+}
+
 export { isOffline };

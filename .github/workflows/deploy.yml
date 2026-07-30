@@ -73,7 +73,7 @@ jobs:
       - name: Validate coordinator (py_compile + static route tests)
         run: |
           python3 -m py_compile coordinator/main.py
-          (cd coordinator && python3 -m unittest -q tests.test_static_routes)
+          (cd coordinator && python3 -m unittest -q tests.test_static_routes tests.test_vm_serial)
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)

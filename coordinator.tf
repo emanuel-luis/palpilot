@@ -55,12 +55,17 @@ resource "google_service_account" "coordinator" {
 resource "google_project_iam_custom_role" "coordinator_vm_ops" {
   role_id     = "palworldCoordinatorVmOps"
   title       = "Palworld Coordinator VM Ops"
-  description = "Least-privilege role for the coordinator function: get/start/stop the Palworld VM only."
+  description = "Least-privilege role for the coordinator function: get/start/stop the Palworld VM, read its boot log."
   stage       = "GA"
   permissions = [
     "compute.instances.get",
     "compute.instances.start",
     "compute.instances.stop",
+    # Serves the VM's boot/system log to the console (GET /api/vm/serial). Read
+    # only, and the one source that still works while the VM is booting or off --
+    # the agent cannot read the journal without a sudoers/startup.sh change.
+    # Custom-role permission changes apply in place: no VM recreate.
+    "compute.instances.getSerialPortOutput",
   ]
 }
 

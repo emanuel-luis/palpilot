@@ -105,6 +105,21 @@ export async function handle(ctx: Ctx): Promise<Response> {
     return json({ ok: true, error: null, stopping: true });
   }
 
+  // VM boot log (serial console). Coordinator-owned, so it answers even while the
+  // VM is off — with available:false, which is what the UI renders as a note.
+  if (path === "/api/vm/serial" && method === "GET") {
+    const start = Number(query.get("start") || 0);
+    if (fx.vm.status !== "RUNNING") {
+      return json({ ok: true, error: null, contents: "", start, next: start, vm_status: fx.vm.status, available: false });
+    }
+    const full = fx.serialLog.join("\n") + "\n";
+    const contents = start >= full.length ? "" : full.slice(start);
+    return json({
+      ok: true, error: null, contents,
+      start, next: full.length, vm_status: fx.vm.status, available: true,
+    });
+  }
+
   // ── watchdog ────────────────────────────────────────────────────────
   if (path === "/api/watchdog" && method === "GET") return json({ ok: true, error: null, ...fx.watchdog });
   if (path === "/api/watchdog" && method === "POST") {

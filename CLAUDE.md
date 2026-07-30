@@ -14,6 +14,7 @@ coordinator/          Always-on control plane — Cloud Run service `palpilot-co
   index.html          BUILT app shell (generated — do not hand-edit; see frontend/).
   assets/             BUILT hashed JS/CSS chunks (generated).
   tests/test_static_routes.py   Asset route, SPA fallback, traversal guard, API-still-gated.
+  tests/test_vm_serial.py       GET /api/vm/serial: gating, secret redaction, VM-off is a state.
   requirements.txt
 frontend/             Console source: Vite + React 18 + TypeScript + Tailwind. Multi-file build.
   src/{App.tsx, lib/, stores/, hooks/, i18n/, data/, components/, views/, mocks/, styles.css}
@@ -109,6 +110,15 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
 - **Cost model:** the VM auto-powers-off when empty; the fixed floor is the static IP + persistent disks, the
   variable cost is VM compute while running. No load balancer anywhere — adding one would add a fixed hourly
   charge larger than the current floor.
+- **Two log sources, and only one of them is the agent's.** `GET /api/logs` tails the game's Unreal logs on the data
+  disk (agent, needs the VM up). `GET /api/vm/serial?start=N` is **coordinator-owned** and returns the VM's serial
+  console — startup.sh echoes, systemd unit transitions, the `game-sync` reconcile, PalServer's stdout — which is the
+  only way to see a boot: the agent can't read the journal (no `journalctl`/sudoers grant without a `startup.sh` edit)
+  and isn't running yet anyway. It needs `compute.instances.getSerialPortOutput` on the coordinator's custom role (a
+  permission edit, applied in place). Tail by feeding the previous `next` back as `start`; GCP's buffer is a ring, so
+  `start` coming back ahead of what you asked for means output aged out. A non-RUNNING VM answers
+  `ok:true, available:false` — "the VM is off" is a state to render, not an error. Output is raw VM text, so it goes
+  through `_redact()` before reaching a browser.
 - **Host metrics + game logs:** `GET /api/metrics/host` parses `/proc` and `GET /api/logs` tails the game log tree
   with a byte cursor (both `view`). Deliberately no `psutil` and no `journalctl`: the venv has only
   fastapi+uvicorn and the sudoers drop-in allows exactly nine `systemctl` commands, so either would force a
