@@ -294,25 +294,10 @@ export async function handle(ctx: Ctx): Promise<Response> {
       target: want,
       up_to_date: fx.update.installed.buildid === want.buildid,
       builds: fx.update.builds, job: fx.update.job, last_run: fx.update.last_run,
-      cooldown: fx.update.cooldown, steam_account: fx.update.steam_account,
+      cooldown: fx.update.cooldown,
     });
   }
   if (path === "/api/update/job" && method === "GET") return json({ ok: true, error: null, job: fx.update.job });
-  if (path === "/api/update/steam-login" && method === "POST") {
-    const b = await readJson(ctx.body);
-    if (!fx.update.steam_account.configured) {
-      return json({ ok: false, error: "no Steam account configured" }, 400);
-    }
-    // Mirror the real flow: the first call demands a Steam Guard code.
-    if (!b.code) {
-      return json({ ok: false, error: "Steam Guard code required", guard_required: true }, 409);
-    }
-    if (String(b.code).length < 5) {
-      return json({ ok: false, error: "Steam did not accept that Steam Guard code", guard_required: true }, 400);
-    }
-    fx.update.steam_account = { ...fx.update.steam_account, logged_in: true, logged_in_at: new Date().toISOString() };
-    return json({ ok: true, error: null, user: fx.update.steam_account.user, logged_in: true });
-  }
   if (path === "/api/update/check" && method === "POST") {
     fx.update.latest = { ...fx.update.latest, checked: new Date().toISOString(), error: null };
     return json({ ok: true, error: null, latest: fx.update.latest, installed: fx.update.installed });

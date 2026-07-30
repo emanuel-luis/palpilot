@@ -192,20 +192,6 @@ export function useApplyUpdate() {
   });
 }
 
-/**
- * POST /api/update/steam-login — completes the Steam sign-in on the VM.
- *
- * The password is NOT sent from here; it comes from instance metadata. This only
- * carries the one-time Steam Guard code Steam wants per new machine.
- */
-export function useSteamLogin() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (code: string) => apiPost<any>("/api/update/steam-login", code ? { code } : {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["update"] }),
-  });
-}
-
 export function useUpdatePolicy() {
   const qc = useQueryClient();
   return useMutation({

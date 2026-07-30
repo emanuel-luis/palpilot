@@ -164,24 +164,6 @@ UPDATE_INFO_TIMEOUT = int(os.environ.get("UPDATE_INFO_TIMEOUT", "180"))
 UPDATE_HISTORY_KEEP = int(os.environ.get("UPDATE_HISTORY_KEEP", "20"))
 
 
-def _instance_metadata(key: str) -> str:
-    """Read one instance metadata attribute (empty if absent / off-GCE).
-
-    Read live, per call, on purpose: ordinary metadata entries are updated
-    IN PLACE by Terraform (unlike metadata_startup_script, which forces a VM
-    replace), so wiring a new value up this way needs no recreate and no
-    systemd unit change -- it takes effect on the next call."""
-    try:
-        req = urllib.request.Request(
-            f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{key}",
-            headers={"Metadata-Flavor": "Google"},
-        )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return resp.read().decode().strip()
-    except (urllib.error.URLError, OSError):
-        return ""
-
-
 def _gce_project_id() -> str:
     """Ask the GCE metadata server for this VM's project id (empty if off-GCE)."""
     try:
@@ -2691,60 +2673,10 @@ def _mark_installed(buildid: str, depots: dict, method: str) -> None:
     _save_update_meta(meta)
 
 
-# --- Steam account (optional; anonymous is still the default) --------------
-#
-# Anonymous downloads are rate-limited per account/IP, and `login anonymous` is
-# an account shared by everyone on the internet -- which is how this server ended
-# up stuck with 'Access Denied' on a manifest request code while a newer build
-# was out. Signing in as a real account that owns the game lifts that.
-#
-# Credentials come from instance METADATA (env wins if set): metadata is updated
-# in place, so wiring an account up needs no VM recreate and no systemd change.
-# They are read per call rather than cached at import so a rotation takes effect
-# on the next run.
-
-
-def _steam_credentials() -> tuple:
-    user = os.environ.get("STEAM_LOGIN_USER") or _instance_metadata("steam-login-user")
-    password = os.environ.get("STEAM_LOGIN_PASSWORD") or _instance_metadata("steam-login-password")
-    return user.strip(), password
-
-
-def _scrub(text: str) -> str:
-    """Never let the password reach a log, an API response or an error string."""
-    _user, password = _steam_credentials()
-    if password and text:
-        return text.replace(password, "********")
-    return text or ""
-
-
-def steam_account() -> dict:
-    """Account status for the console. Never returns the password."""
-    user, password = _steam_credentials()
-    login = _load_update_meta().get("steam_login") or {}
-    return {
-        "configured": bool(user and password),
-        "user": user or None,
-        "mode": "account" if user and password else "anonymous",
-        # Last CONFIRMED sign-in. A cached Steam session is what makes later runs
-        # work without a Steam Guard code, so this is the flag that matters.
-        "logged_in": bool(login.get("user") and login.get("user") == user),
-        "logged_in_at": login.get("at"),
-    }
-
-
-def _steamcmd_cmd(rest: list, code: str = "") -> list:
+def _steamcmd_cmd(rest: list) -> list:
     """steamcmd invocation matching startup.sh's (force_install_dir before
-    login; the Windows platform override for the Proton runtime).
-
-    Signs in with the configured account when there is one, else anonymously.
-    `code` supplies a Steam Guard code, which Steam requires once per new
-    machine; after that steamcmd's cached session covers subsequent runs."""
-    user, password = _steam_credentials()
-    if user and password:
-        login = ["+login", user, password] + ([code] if code else [])
-    else:
-        login = ["+login", "anonymous"]
+    login; the Windows platform override for the Proton runtime)."""
+    login = ["+login", "anonymous"]
     args = [STEAMCMD, "+force_install_dir", STEAM_DIR] + login
     if RUNTIME_MODE == "proton":
         args = (
@@ -2755,14 +2687,13 @@ def _steamcmd_cmd(rest: list, code: str = "") -> list:
     return args + rest + ["+quit"]
 
 
-def _run_steamcmd(rest: list, timeout: int, home: str = "", code: str = ""):
+def _run_steamcmd(rest: list, timeout: int, home: str = ""):
     """Run steamcmd under a HOME on the data disk.
 
-    HOME matters twice: `download_depot` ignores force_install_dir and stages
-    under HOME (and the default HOME=/home/steam is the small BOOT disk, while
-    the free-space check measures the data disk), AND steamcmd caches the Steam
-    session under HOME -- so every run must use the SAME one or a sign-in would
-    not carry over. Defaults to STEAMCMD_HOME for exactly that reason."""
+    `download_depot` ignores force_install_dir and stages under HOME, and the
+    inherited HOME=/home/steam is the small BOOT disk while the free-space check
+    measures the data disk -- so staging several GB there would fill the boot
+    disk with the preflight reporting plenty of room. Defaults to STEAMCMD_HOME."""
     env = dict(os.environ)
     env["HOME"] = home or STEAMCMD_HOME
     try:
@@ -2773,7 +2704,7 @@ def _run_steamcmd(rest: list, timeout: int, home: str = "", code: str = ""):
         # path may simply not be creatable.
         pass
     return subprocess.run(
-        _steamcmd_cmd(rest, code=code),
+        _steamcmd_cmd(rest),
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -2781,108 +2712,6 @@ def _run_steamcmd(rest: list, timeout: int, home: str = "", code: str = ""):
         env=env,
     )
 
-
-_LOGIN_OK_RE = re.compile(r"Logged in OK|Waiting for user info\.\.\.OK", re.IGNORECASE)
-_GUARD_RE = re.compile(
-    r"Steam Guard|two-factor|Two-factor|steamguard code|Enter the current code", re.IGNORECASE
-)
-_BAD_PASSWORD_RE = re.compile(r"Invalid Password|InvalidPassword|password is incorrect", re.IGNORECASE)
-_RATE_LIMIT_RE = re.compile(r"Rate Limit Exceeded|RateLimitExceeded", re.IGNORECASE)
-_PUSH_WAIT_RE = re.compile(
-    r"confirm the login in the Steam Mobile app|Waiting for confirmation|"
-    r"Timed out waiting for confirmation",
-    re.IGNORECASE,
-)
-
-
-def steam_login(code: str = "") -> dict:
-    """Sign steamcmd in as the configured account, once, and cache the session.
-
-    Steam requires a Steam Guard code the first time an account signs in from a
-    new machine. There is no shell on this VM, so that code has to arrive through
-    the API: POST it here, steamcmd stores the resulting session under
-    STEAMCMD_HOME, and every later run (updates, depot downloads) is
-    authenticated without a code. Nothing is stored by us except the fact that it
-    worked -- the password stays in metadata, the session belongs to steamcmd."""
-    user, password = _steam_credentials()
-    if not user or not password:
-        return {
-            "ok": False,
-            "reason": "validation",
-            "error": (
-                "no Steam account configured. Set steam_login_user / "
-                "steam_login_password (terraform.tfvars -> instance metadata)."
-            ),
-        }
-    code = re.sub(r"[^A-Za-z0-9]", "", code or "")[:8]
-    try:
-        # +info is a no-op that still requires a completed login, so this proves
-        # the session rather than just launching steamcmd.
-        r = _run_steamcmd(["+info"], timeout=UPDATE_INFO_TIMEOUT, code=code)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-        return {"ok": False, "reason": "conflict", "error": f"steamcmd: {e}"}
-    out = _scrub((r.stdout or "") + (r.stderr or ""))
-    tail = out[-1200:]
-    # SUCCESS IS CHECKED FIRST, and that ordering is the whole point.
-    #
-    # steamcmd prints "This account is protected by a Steam Guard mobile
-    # authenticator" on the way to a SUCCESSFUL code login too. Classifying the
-    # Steam Guard pattern before success therefore reported a working sign-in as
-    # "that code was not accepted" and never recorded the session -- which is
-    # exactly what happened when the code was submitted through the console.
-    if _LOGIN_OK_RE.search(out):
-        meta = _load_update_meta()
-        meta["steam_login"] = {"user": user, "at": _timestamp()}
-        _save_update_meta(meta)
-        # A licensed session is precisely what the anonymous denial was about.
-        clear_update_cooldown()
-        return {"ok": True, "error": None, "user": user, "logged_in": True}
-    if _BAD_PASSWORD_RE.search(out):
-        return {"ok": False, "reason": "validation", "error": "Steam rejected the password.", "log": tail}
-    if _RATE_LIMIT_RE.search(out):
-        return {
-            "ok": False,
-            "reason": "conflict",
-            "error": "Steam rate-limited the sign-in. Wait a few minutes and try again.",
-            "log": tail,
-        }
-    # Push approval, not a code: an account with the mobile authenticator gets
-    # "Please confirm the login in the Steam Mobile app", steamcmd waits, and
-    # gives up with ERROR (Timeout) if nobody taps approve. Telling that user to
-    # "submit a code" describes the wrong action, so it gets its own answer.
-    if _PUSH_WAIT_RE.search(out):
-        return {
-            "ok": False,
-            "reason": "conflict",
-            "guard_required": True,
-            "push_required": True,
-            "error": (
-                "Steam sent a login approval to your Steam Mobile app and timed out waiting. "
-                "Open the app, press Sign in here again, and approve the prompt within about a "
-                "minute — or submit a Steam Guard code instead."
-            ),
-            "log": tail,
-        }
-    if _GUARD_RE.search(out) and not code:
-        return {
-            "ok": False,
-            "reason": "conflict",
-            "guard_required": True,
-            "error": (
-                "Steam Guard code required. Take the code from your Steam Mobile app "
-                "(Steam Guard) or email and submit it here — once for this machine."
-            ),
-            "log": tail,
-        }
-    if _GUARD_RE.search(out) and code:
-        return {
-            "ok": False,
-            "reason": "validation",
-            "guard_required": True,
-            "error": "Steam did not accept that Steam Guard code. Codes expire quickly — try a fresh one.",
-            "log": tail,
-        }
-    return {"ok": False, "reason": "conflict", "error": f"sign-in failed: {tail[-300:]}", "log": tail}
 
 
 def latest_version(refresh: bool = False) -> dict:
@@ -2905,7 +2734,7 @@ def latest_version(refresh: bool = False) -> dict:
         return {**cached, "error": f"steamcmd: {e}"}
     info = _depots_from_appinfo(_parse_vdf(r.stdout or ""))
     if not info["buildid"]:
-        tail = _scrub((r.stderr or "") + (r.stdout or ""))[-400:]
+        tail = ((r.stderr or "") + (r.stdout or ""))[-400:]
         return {**cached, "error": f"could not read the public buildid from steamcmd: {tail}"}
     latest = {
         "buildid": info["buildid"],
@@ -3190,7 +3019,7 @@ def _install_latest() -> dict:
         r = _run_steamcmd(
             [*extra, "+app_update", STEAM_APP_ID, "validate"], timeout=UPDATE_TIMEOUT
         )
-        log = _scrub((r.stdout or "") + (r.stderr or ""))[-4000:]
+        log = ((r.stdout or "") + (r.stderr or ""))[-4000:]
         m = _STEAM_STATE_RE.search(log)
         state = m.group(1) if m else None
         acf = _read_appmanifest()
@@ -3412,7 +3241,7 @@ def _install_pinned(buildid: str) -> dict:
             timeout=UPDATE_TIMEOUT,
             home=STEAMCMD_HOME,
         )
-        out = _scrub((r.stdout or "") + (r.stderr or ""))
+        out = ((r.stdout or "") + (r.stderr or ""))
         log_parts.append(out[-1500:])
         # steamcmd's own "Depot download complete" line first; guessed roots only
         # as a fallback.
@@ -3731,8 +3560,6 @@ def version_status() -> dict:
         "disk": {"free": _free_bytes(), "install": _install_size()},
         # Present while we are deliberately not retrying (Steam denied us).
         "cooldown": update_cooldown(),
-        # Anonymous vs. signed-in, and whether a Steam Guard code is still needed.
-        "steam_account": steam_account(),
     }
 
 
@@ -4075,13 +3902,6 @@ def build_app():
                           "reason": "conflict" if latest.get("error") else None,
                           "latest": latest, "installed": installed_version(),
                           "target": resolve_target()})
-
-    @app.post("/api/update/steam-login")
-    async def post_steam_login(payload: dict | None = None, _: str = Depends(require("settings"))):
-        # Steam Guard needs a code once per machine and this VM has no shell, so
-        # the code arrives here. The password is never accepted over the API --
-        # it comes from instance metadata; this only completes the sign-in.
-        return _envelope(steam_login(code=str((payload or {}).get("code") or "")))
 
     @app.post("/api/update/policy")
     async def post_update_policy(payload: dict, _: str = Depends(require("settings"))):

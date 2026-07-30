@@ -337,143 +337,27 @@ class PinnedInstallSafety(unittest.TestCase):
         )
 
 
-class SteamAccountLogin(unittest.TestCase):
-    """Signing steamcmd in as a real account instead of `anonymous`.
-
-    Exists because anonymous downloads are rate-limited per account/IP, which is
-    what stranded the live server on an old build."""
+class DepotStagingCleanup(unittest.TestCase):
+    """Cleanup removes staged depot content and leaves the rest of the steamcmd
+    HOME alone (caches, logs) rather than deleting the directory wholesale."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self._saved = {k: getattr(panel, k) for k in ("UPDATE_META", "STEAMCMD_HOME", "STEAM_DIR")}
-        panel.UPDATE_META = os.path.join(self.tmp, "update.json")
+        self._saved = panel.STEAMCMD_HOME
         panel.STEAMCMD_HOME = os.path.join(self.tmp, "home")
-        panel.STEAM_DIR = os.path.join(self.tmp, "Steam")
-        self._saved_fns = (panel._chown_steam, panel._steam_credentials, panel._run_steamcmd)
-        panel._chown_steam = lambda *a, **k: None
-        panel._steam_credentials = lambda: ("acct", "s3cret")
 
     def tearDown(self):
-        for k, v in self._saved.items():
-            setattr(panel, k, v)
-        (panel._chown_steam, panel._steam_credentials, panel._run_steamcmd) = self._saved_fns
+        panel.STEAMCMD_HOME = self._saved
 
-    def _reply(self, out):
-        class R:
-            stdout = out
-            stderr = ""
-            returncode = 0
-
-        panel._run_steamcmd = lambda rest, timeout, home="", code="": R()
-
-    def test_command_uses_the_account_when_configured(self):
-        cmd = panel._steamcmd_cmd(["+info"])
-        self.assertIn("+login", cmd)
-        self.assertEqual(cmd[cmd.index("+login") + 1], "acct")
-        self.assertEqual(cmd[cmd.index("+login") + 2], "s3cret")
-        self.assertNotIn("anonymous", cmd)
-
-    def test_command_falls_back_to_anonymous(self):
-        panel._steam_credentials = lambda: ("", "")
-        cmd = panel._steamcmd_cmd(["+info"])
-        self.assertEqual(cmd[cmd.index("+login") + 1], "anonymous")
-
-    def test_guard_code_is_appended_and_sanitised(self):
-        cmd = panel._steamcmd_cmd(["+info"], code="  ab-12/34 ")
-        self.assertEqual(cmd[cmd.index("+login") + 3], "  ab-12/34 ")  # raw here
-        # steam_login() is what sanitises; check it strips separators.
-        self._reply("Logged in OK\n")
-        panel.steam_login(code="ab-12/34")
-        # (no assertion on the code itself beyond not raising; see below)
-
-    def test_password_never_appears_in_output(self):
-        self.assertEqual(panel._scrub("login s3cret failed"), "login ******** failed")
-
-    def test_successful_login_is_recorded_and_clears_the_cooldown(self):
-        panel._set_update_cooldown("denied earlier")
-        self._reply("Logging in user 'acct' to Steam Public...\nLogged in OK\n")
-        r = panel.steam_login()
-        self.assertTrue(r["ok"], r)
-        self.assertTrue(panel.steam_account()["logged_in"])
-        self.assertEqual(panel.update_cooldown(), {})  # a licensed session unblocks us
-
-    def test_success_wins_over_the_guard_banner(self):
-        # THE bug the console hit: steamcmd prints the Steam Guard banner on the
-        # way to a SUCCESSFUL code login, so classifying the banner first
-        # reported a working sign-in as a rejected code and never stored it.
-        self._reply(
-            "Logging in user 'acct' to Steam Public...\n"
-            "This account is protected by a Steam Guard mobile authenticator.\n"
-            "Logged in OK\n"
-            "Waiting for user info...OK\n"
-        )
-        r = panel.steam_login(code="ABC12")
-        self.assertTrue(r["ok"], r)
-        self.assertTrue(panel.steam_account()["logged_in"])
-
-    def test_push_approval_timeout_is_its_own_answer(self):
-        # Verbatim shape from the live run: an authenticator account gets a push
-        # prompt, not a code prompt, so "submit a code" is the wrong advice.
-        self._reply(
-            "Logging in user 'acct' [U:1:0] to Steam Public...\n"
-            "This account is protected by a Steam Guard mobile authenticator.\n"
-            "Please confirm the login in the Steam Mobile app on your phone.\n"
-            "Waiting for confirmation...\nWaiting for confirmation...\n"
-            "Wait for confirmation timed out.Timed out waiting for confirmation.\n"
-            "ERROR (Timeout)\n"
-        )
-        r = panel.steam_login()
-        self.assertFalse(r["ok"])
-        self.assertTrue(r["push_required"])
-        self.assertIn("approve", r["error"].lower())
-        self.assertFalse(panel.steam_account()["logged_in"])
-
-    def test_guard_required_is_its_own_answer(self):
-        self._reply("Steam Guard code required to complete login\n")
-        r = panel.steam_login()
-        self.assertFalse(r["ok"])
-        self.assertTrue(r["guard_required"])
-        self.assertFalse(panel.steam_account()["logged_in"])
-
-    def test_bad_guard_code_says_so(self):
-        self._reply("Two-factor code mismatch\n")
-        r = panel.steam_login(code="12345")
-        self.assertFalse(r["ok"])
-        self.assertTrue(r["guard_required"])
-        self.assertIn("fresh one", r["error"])
-
-    def test_bad_password_is_distinguished(self):
-        self._reply("FAILED login with result code Invalid Password\n")
-        r = panel.steam_login()
-        self.assertFalse(r["ok"])
-        self.assertIn("password", r["error"].lower())
-
-    def test_rate_limited_login_is_distinguished(self):
-        self._reply("FAILED login with result code Rate Limit Exceeded\n")
-        r = panel.steam_login()
-        self.assertFalse(r["ok"])
-        self.assertIn("rate-limited", r["error"])
-
-    def test_login_refused_without_configured_credentials(self):
-        panel._steam_credentials = lambda: ("", "")
-        r = panel.steam_login()
-        self.assertFalse(r["ok"])
-        self.assertEqual(r["reason"], "validation")
-
-    def test_account_status_never_leaks_the_password(self):
-        self.assertNotIn("s3cret", json.dumps(panel.steam_account()))
-
-    def test_staging_cleanup_keeps_the_session(self):
-        # Deleting the whole steamcmd HOME after a depot install would sign us
-        # out and re-trigger Steam Guard on the next update.
-        cfg = os.path.join(panel.STEAMCMD_HOME, "Steam", "config")
+    def test_only_staged_content_is_removed(self):
+        keep = os.path.join(panel.STEAMCMD_HOME, "Steam", "appcache")
         content = os.path.join(panel.STEAMCMD_HOME, "Steam", "steamapps", "content", "app_x")
-        os.makedirs(cfg)
+        os.makedirs(keep)
         os.makedirs(content)
-        with open(os.path.join(cfg, "config.vdf"), "w", encoding="utf-8") as f:
-            f.write("session")
+        with open(os.path.join(keep, "appinfo.vdf"), "w", encoding="utf-8") as f:
+            f.write("cache")
         panel._clear_depot_staging()
-        self.assertTrue(os.path.exists(os.path.join(cfg, "config.vdf")))
+        self.assertTrue(os.path.exists(os.path.join(keep, "appinfo.vdf")))
         self.assertFalse(os.path.isdir(content))
 
 

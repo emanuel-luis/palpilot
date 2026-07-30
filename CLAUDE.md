@@ -126,15 +126,13 @@ docs/                 ARCHITECTURE.md, CICD.md, DISCORD.md.
   plain → `+app_info_update 1` → clear `appcache/appinfo.vdf` → clear `steamapps/downloading/<appid>`. The winning
   strategy is reported, and a failure carries the tail of Steam's own `logs/content_log.txt`, which is the only
   place the real cause is written.
-- **Steam account (optional) vs. anonymous:** `steamcmd +login anonymous` is the default and is rate-limited per
-  account/IP — Steam answered `Access Denied` on a manifest request code and stranded this server on an old build.
-  Set `steam_login_user` / `steam_login_password` to sign in as an account that owns the game. They flow through
-  **instance metadata**, read live by `_instance_metadata()`, so adding/rotating them is an **in-place apply — no VM
-  recreate and no systemd change** (contrast `startup.sh`, which is ForceNew). Steam Guard needs a code once per
-  machine and the VM has no shell, so `POST /api/update/steam-login {code}` completes it; steamcmd then caches the
-  session under `STEAMCMD_HOME`. **That directory is also where `download_depot` stages**, so cleanup must delete only
-  `steamapps/content` (`_clear_depot_staging()`) — `rmtree` on the whole HOME signs the account out and re-triggers
-  Steam Guard. The password is never returned by an endpoint and every steamcmd output goes through `_scrub()`.
+- **Downloads are anonymous (`steamcmd +login anonymous`), and that is rate-limited per account/IP.** Steam has
+  answered `Access Denied` on a manifest request code (`content_log.txt`) and stranded this server on an old build;
+  no retry or cache clear fixes that, so `_install_latest()` detects it and sets a persisted cooldown
+  (`update_cooldown()`) instead of hammering. An authenticated-login path was built and then removed on request —
+  if the denial recurs, that is the fix to reach for (git history: "optional Steam account sign-in").
+  `download_depot` stages under `STEAMCMD_HOME` on the data disk (it ignores `force_install_dir`, and the default
+  HOME is the small boot disk), and cleanup deletes only `steamapps/content` (`_clear_depot_staging()`).
 - **Game version is agent-owned:** policy + observed-build history live in `palworld-update.json` on the data disk,
   the wanted build per save lives in the slot metadata (`version: {mode, buildid}`), and `reconcile_version()` is the
   single entry point (boot via `panel.py game-sync`, panel start-up thread, save activate/restore, interval, or

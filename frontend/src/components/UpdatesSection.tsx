@@ -8,8 +8,7 @@
 // promise the server can't keep.
 import { useState } from "react";
 import {
-  useGameVersion, useCheckUpdate, useApplyUpdate, useUpdatePolicy, useSetSaveVersion,
-  useSteamLogin, isOffline,
+  useGameVersion, useCheckUpdate, useApplyUpdate, useUpdatePolicy, useSetSaveVersion, isOffline,
 } from "@/hooks/queries";
 import { session } from "@/stores/session";
 import { toast } from "./ui/Toast";
@@ -33,11 +32,9 @@ export function UpdatesSection() {
   const apply = useApplyUpdate();
   const policy = useUpdatePolicy();
   const setVersion = useSetSaveVersion();
-  const steamLogin = useSteamLogin();
   const canWrite = session.can("settings");
   const canPin = session.can("saves");
   const [busyBuild, setBusyBuild] = useState<string | null>(null);
-  const [guard, setGuard] = useState("");
 
   if (q.isLoading) return <div className="field-hint">{t("common.loading")}</div>;
   if (isOffline(q.data)) {
@@ -60,17 +57,6 @@ export function UpdatesSection() {
   const job = d.job || {};
   const running = job.state === "running";
   const builds: any[] = d.builds || [];
-  const acct = d.steam_account || { configured: false, logged_in: false, user: null };
-
-  async function onSignIn() {
-    const r = await steamLogin.mutateAsync(guard);
-    if (!r.ok) {
-      toast.err(r.error || t("updates.signInFailed"));
-      return;
-    }
-    setGuard("");
-    toast.ok(t("updates.signInDone"));
-  }
 
   async function onToggleAuto(next: boolean) {
     const r = await policy.mutateAsync(next);
@@ -197,45 +183,6 @@ export function UpdatesSection() {
               )
             )}
           </div>
-        </div>
-      </div>
-
-      {/* Steam account. Anonymous is the default and usually fine — this panel
-          exists because anonymous rate limits can block updates outright, and
-          the one-time Steam Guard code has nowhere else to go (no shell on the
-          VM). The password never travels through this form. */}
-      <div className="panel">
-        <div className="panel-header"><div className="panel-title">{t("updates.account")}</div></div>
-        <div className="panel-body stack">
-          <div className="field-hint">
-            {acct.logged_in
-              ? t("updates.accountSignedIn", { user: acct.user || "" })
-              : acct.configured
-                ? t("updates.accountConfigured", { user: acct.user || "" })
-                : t("updates.accountAnonymous")}
-          </div>
-          {!acct.configured && <div className="field-hint">{t("updates.accountHint")}</div>}
-          {acct.configured && !acct.logged_in && canWrite && (
-            <>
-              <div className="field-hint">{t("updates.guardHint")}</div>
-              <div className="row">
-                <div className="field" style={{ maxWidth: 200 }}>
-                  <label className="field-label" htmlFor="guard">{t("updates.guardCode")}</label>
-                  <input
-                    id="guard"
-                    className="input mono"
-                    value={guard}
-                    autoComplete="one-time-code"
-                    onChange={(e) => setGuard(e.target.value.trim())}
-                    onKeyDown={(e) => { if (e.key === "Enter") onSignIn(); }}
-                  />
-                </div>
-                <button className="btn btn-primary" onClick={onSignIn} disabled={steamLogin.isPending}>
-                  {steamLogin.isPending ? t("updates.signingIn") : t("updates.signIn")}
-                </button>
-              </div>
-            </>
-          )}
         </div>
       </div>
 
