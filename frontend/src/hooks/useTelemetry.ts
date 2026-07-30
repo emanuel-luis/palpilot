@@ -44,6 +44,64 @@ export function useHostMetrics(intervalMs = 5000) {
   });
 }
 
+// ------------------------------------------------- persisted metric history
+//
+// The agent has been sampling to palworld-stats/history.jsonl on the data disk
+// every STATS_SAMPLE_SECONDS (and mirroring to GCS) all along -- the UI simply
+// never read it, so every page load started from an empty chart and the page
+// claimed nothing was stored. This is that history.
+//
+// Samples exist only while the VM runs (nothing samples a powered-off machine),
+// so gaps are real and are drawn as gaps rather than interpolated over.
+
+export type StoredSample = {
+  t: number;
+  cpu: number | null;
+  mem: number | null;
+  disk: number | null;
+  rx: number | null;
+  tx: number | null;
+  players: number | null;
+  fps: number | null;
+  frametime: number | null;
+  uptime: number | null;
+  up: boolean;
+};
+
+export type MetricsHistory = {
+  samples: StoredSample[];
+  count: number;
+  truncated: boolean;
+  sample_seconds: number;
+  last_sync: number | null;
+  last_error: string | null;
+};
+
+/**
+ * Persisted samples newer than `windowSeconds` ago.
+ *
+ * Refetched on the agent's own cadence rather than the UI's: asking more often
+ * than a sample is written just re-downloads the same rows.
+ */
+export function useMetricsHistory(windowSeconds: number) {
+  const s = useSession();
+  return useQuery({
+    queryKey: ["metrics", "history", windowSeconds],
+    queryFn: async () => {
+      const since = Math.floor(Date.now() / 1000) - windowSeconds;
+      const r = await apiGet<any>("/api/metrics/history", { query: `since=${since}` });
+      if (r.status === 503 && (r.data as any)?.error === "vm_offline") {
+        return { offline: true as const, vmStatus: (r.data as any)?.status || "TERMINATED" };
+      }
+      if (!r.ok) return Promise.reject(r);
+      return r.data as MetricsHistory;
+    },
+    enabled: s.authed && s.ready && session.can("view"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
 export type Sample = {
   t: number;
   cpu: number | null;

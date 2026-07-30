@@ -4,13 +4,23 @@
 // Two honesty rules the whole page obeys:
 //   * a reading the server returns as null renders as "—", never as 0. An idle
 //     machine and an unknown machine are different facts.
-//   * history exists only while this tab is open. Nothing is stored server-side,
-//     so the charts say so rather than implying retained history.
+//   * history is only as long as the agent has been sampling, and it only samples
+//     while the VM runs. Gaps (the server was off) stay gaps.
+//
+// History comes from GET /api/metrics/history: the agent has been writing a
+// sample a minute to the data disk (and mirroring it to GCS) all along, so the
+// charts start populated instead of from an empty buffer, and survive a reload.
+// Live readings are appended on top so the tail stays at the poll cadence rather
+// than jumping once a minute.
 //
 // There is no TPS anywhere: Palworld reports server FPS and frame time, not a
 // tick rate. Showing a "TPS" number would mean inventing one.
+import { useMemo, useState } from "react";
 import { useOverview, isOffline } from "@/hooks/queries";
-import { useHostMetrics, useTelemetryHistory } from "@/hooks/useTelemetry";
+import {
+  useHostMetrics, useMetricsHistory, useTelemetryHistory,
+  type Sample, type StoredSample,
+} from "@/hooks/useTelemetry";
 import { deriveGameState } from "@/components/StatusPills";
 import { PageHeader, OfflineNotice } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -110,9 +120,21 @@ function Spark({
   );
 }
 
+/** Retention windows offered to the user. Capped at 7 days because the agent
+ *  rotates history.jsonl at STATS_MAX_BYTES and older data moves to GCS. */
+const RANGES = [
+  { id: "1h", label: "1h", seconds: 3600 },
+  { id: "6h", label: "6h", seconds: 6 * 3600 },
+  { id: "24h", label: "24h", seconds: 24 * 3600 },
+  { id: "7d", label: "7d", seconds: 7 * 24 * 3600 },
+] as const;
+
 export function PerformancePage() {
   const overview = useOverview();
   const metricsQ = useHostMetrics();
+  const [range, setRange] = useState<(typeof RANGES)[number]["id"]>("6h");
+  const rangeSeconds = RANGES.find((r) => r.id === range)!.seconds;
+  const historyQ = useMetricsHistory(rangeSeconds);
 
   const body: any = overview.data?.data || {};
   const vm = body.vm || {};
@@ -122,11 +144,35 @@ export function PerformancePage() {
   const online = gameState === "online";
 
   const host = !isOffline(metricsQ.data) ? (metricsQ.data as any) : undefined;
-  const { history } = useTelemetryHistory(
+  const { history: liveHistory } = useTelemetryHistory(
     host,
     gameMetrics?.currentplayernum ?? null,
     gameMetrics?.serverfps ?? null,
   );
+
+  // Stored samples first, then whatever this tab has seen since the newest stored
+  // one. Without that cutoff the two sources overlap and the tail draws twice.
+  const stored: StoredSample[] = !isOffline(historyQ.data)
+    ? ((historyQ.data as any)?.samples ?? [])
+    : [];
+  const history: Sample[] = useMemo(() => {
+    const fromStore: Sample[] = stored.map((s) => ({
+      t: s.t * 1000,
+      cpu: s.cpu,
+      mem: s.mem,
+      rx: s.rx,
+      tx: s.tx,
+      players: s.players,
+      fps: s.fps,
+    }));
+    const newestStored = fromStore.length ? fromStore[fromStore.length - 1].t : 0;
+    return fromStore.concat(liveHistory.filter((s) => s.t > newestStored));
+  }, [stored, liveHistory]);
+
+  const sampleSeconds = !isOffline(historyQ.data)
+    ? ((historyQ.data as any)?.sample_seconds ?? 60)
+    : 60;
+  const storedCount = stored.length;
 
   if (!online && !host) {
     return (
@@ -156,8 +202,41 @@ export function PerformancePage() {
     <>
       <PageHeader
         title="Performance"
-        description="Read live from the VM. History is kept only while this tab is open — nothing is stored server-side."
+        description={`Live readings from the VM, over history the agent stores on the data disk — one sample every ${sampleSeconds}s while the server runs. Gaps mean the VM was off.`}
+        actions={
+          <div className="flex gap-1" role="group" aria-label="History range">
+            {RANGES.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => setRange(r.id)}
+                aria-pressed={range === r.id}
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-xs transition-colors duration-fast",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  range === r.id
+                    ? "bg-signal/12 font-medium text-fg"
+                    : "text-muted hover:bg-surface-2 hover:text-fg",
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        }
       />
+
+      {/* Say plainly how much retained data is behind the charts, so a short
+          history reads as "the agent only started recently" rather than as a
+          broken chart. */}
+      <p className="mt-1 text-2xs text-faint">
+        {historyQ.isLoading
+          ? "Loading stored history…"
+          : storedCount
+            ? `${storedCount} stored sample${storedCount === 1 ? "" : "s"} in the last ${range}${
+                (historyQ.data as any)?.truncated ? " (older samples trimmed)" : ""
+              }`
+            : "No stored samples in this range yet — the agent writes one a minute while the server runs."}
+      </p>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Meter
