@@ -2370,18 +2370,64 @@ def start_stats_collector() -> None:
     atexit.register(lambda: stats_flush())
 
 
-def _log_files() -> list:
-    try:
-        names = [n for n in os.listdir(LOGS_DIR) if n.lower().endswith(".log")]
-    except OSError:
-        return []
+# Where a Palworld server might leave a log file. Unreal's own path first, then
+# the places crash/backup logs land. Searching a list rather than one directory
+# because "the Logs tab is empty" gave no way to tell a missing directory from a
+# game that simply never writes a file.
+LOG_EXTENSIONS = (".log", ".txt")
+
+
+def _log_dirs() -> list:
+    """Resolved per call, not at import: LOGS_DIR/STEAM_DIR are module-level
+    knobs that tests (and an env override) reassign, and a list frozen at import
+    would quietly ignore them."""
+    return [
+        LOGS_DIR,
+        os.path.join(LOGS_DIR, "Backup"),
+        os.path.join(STEAM_DIR, "Pal", "Binaries", "Linux"),
+        os.path.join(STEAM_DIR, "Pal", "Saved", "Crashes"),
+    ]
+
+
+def log_locations() -> list:
+    """What is actually on disk in each candidate directory.
+
+    Diagnostic, and deliberately part of the API response: an empty log tab is
+    otherwise indistinguishable from a broken reader, which cost real debugging
+    time. `entries` lists everything found, not just matches."""
     out = []
-    for n in names:
+    for d in _log_dirs():
         try:
-            stt = os.stat(os.path.join(LOGS_DIR, n))
+            entries = sorted(os.listdir(d))
+            out.append({"path": d, "exists": True, "entries": entries[:20], "count": len(entries)})
+        except OSError:
+            out.append({"path": d, "exists": False, "entries": [], "count": 0})
+    return out
+
+
+def _log_files() -> list:
+    out = []
+    seen = set()
+    for d in _log_dirs():
+        try:
+            names = [n for n in os.listdir(d) if n.lower().endswith(LOG_EXTENSIONS)]
         except OSError:
             continue
-        out.append({"name": n, "size": stt.st_size, "modified": int(stt.st_mtime)})
+        for n in names:
+            full = os.path.join(d, n)
+            try:
+                stt = os.stat(full)
+            except OSError:
+                continue
+            if not stat.S_ISREG(stt.st_mode):
+                continue
+            # Same basename in two directories: qualify the later one so the
+            # client's file picker stays unambiguous.
+            label = n if n not in seen else f"{os.path.basename(d)}/{n}"
+            seen.add(label)
+            out.append(
+                {"name": label, "path": full, "size": stt.st_size, "modified": int(stt.st_mtime)}
+            )
     out.sort(key=lambda x: x["modified"], reverse=True)
     return out
 
@@ -2400,16 +2446,21 @@ def read_log(name: str = "", cursor: int = -1, max_bytes: int = 0) -> dict:
         return {
             "ok": True, "file": "", "files": [], "cursor": 0, "size": 0,
             "lines": [], "rotated": False, "truncated": False,
+            # Says WHERE we looked and what was there, so an empty tab is
+            # self-explanatory instead of looking like a bug.
+            "locations": log_locations(),
         }
     if name:
-        safe = _safe_name(name)
-        chosen = next((f for f in files if f["name"] == safe), None)
+        # Compared against the listing rather than path-joined: the name may be
+        # "<dir>/<file>" for a duplicate basename, and the listing is the only
+        # thing allowed to decide which real path that means.
+        chosen = next((f for f in files if f["name"] == name), None)
         if not chosen:
             return {"ok": False, "reason": "not_found", "error": "log file not found"}
     else:
         chosen = files[0]  # newest by mtime
 
-    path = os.path.join(LOGS_DIR, chosen["name"])
+    path = chosen["path"]
     cap = min(max_bytes if max_bytes > 0 else LOG_MAX_CHUNK_BYTES, LOG_MAX_CHUNK_BYTES)
     try:
         size = os.path.getsize(path)
@@ -2437,8 +2488,15 @@ def read_log(name: str = "", cursor: int = -1, max_bytes: int = 0) -> dict:
     if truncated:
         lines = lines[-LOG_MAX_LINES:]
     return {
-        "ok": True, "file": chosen["name"], "files": files, "cursor": size,
-        "size": size, "lines": lines, "rotated": rotated, "truncated": truncated,
+        "ok": True,
+        "file": chosen["name"],
+        # Absolute paths stay server-side; the client selects by name.
+        "files": [{k: v for k, v in f.items() if k != "path"} for f in files],
+        "cursor": size,
+        "size": size,
+        "lines": lines,
+        "rotated": rotated,
+        "truncated": truncated,
     }
 
 
