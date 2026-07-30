@@ -97,8 +97,22 @@ function SourceTabs({ source, onChange }: { source: Source; onChange: (s: Source
 export function LogsPage() {
   const [source, setSource] = useState<Source>("game");
   const gameLog = useLogStream(source === "game");
-  const bootLog = useBootLogStream(source === "boot");
-  const log = source === "game" ? gameLog : bootLog;
+
+  // This Palworld build writes no log file -- Pal/Saved/Logs does not even exist
+  // on the VM -- because the dedicated server logs to stdout, which systemd sends
+  // to the journal. That output IS in the serial console, so rather than leaving
+  // the tab permanently empty, the game view falls back to the game-tagged lines
+  // of the boot stream. Same content, no infrastructure change.
+  const journalFallback = source === "game" && !gameLog.files.length;
+  const bootLog = useBootLogStream(source === "boot" || journalFallback);
+  const log = source === "boot" || journalFallback ? bootLog : gameLog;
+  const baseLines = useMemo(
+    () =>
+      journalFallback
+        ? bootLog.lines.filter((l) => parseLogLine(l.text).source === "game")
+        : log.lines,
+    [journalFallback, bootLog.lines, log.lines],
+  );
   const [filter, setFilter] = useState("");
   // On by default: a quiet server's log is ~90% poll chatter, and a first-time
   // view full of "REST accessed endpoint /v1/api/players OK" teaches nothing.
@@ -111,10 +125,10 @@ export function LogsPage() {
   // Noise filtering happens before the text filter so the "N hidden" count means
   // "hidden as noise", not "didn't match your search".
   const denoised = useMemo(
-    () => (hideNoise ? log.lines.filter((l) => !isPollNoise(l.text)) : log.lines),
-    [log.lines, hideNoise],
+    () => (hideNoise ? baseLines.filter((l) => !isPollNoise(l.text)) : baseLines),
+    [baseLines, hideNoise],
   );
-  const noiseHidden = log.lines.length - denoised.length;
+  const noiseHidden = baseLines.length - denoised.length;
 
   const rows = useMemo(() => {
     if (!filter.trim()) return denoised;
@@ -270,7 +284,16 @@ export function LogsPage() {
           </div>
         ) : null}
 
-        {source === "boot" && !bootLog.available ? (
+        {/* Say where these lines come from: the tab promises the game log, and
+            this is the game's stdout by way of the VM console, not a file. */}
+        {journalFallback && bootLog.available ? (
+          <div className="border-b border-line/60 bg-surface-2/60 px-4 py-2 text-xs text-muted">
+            This server's Palworld writes no log file, so this is its output read from the VM console.
+            History is limited to the console buffer.
+          </div>
+        ) : null}
+
+        {(source === "boot" || journalFallback) && !bootLog.available ? (
           <div className="border-b border-line/60 bg-surface-2/60 px-4 py-2 text-xs text-muted">
             {bootLog.vmStatus && bootLog.vmStatus !== "RUNNING"
               ? `The VM is ${bootLog.vmStatus.toLowerCase()} — the serial console only exists while it runs. Start the server and the boot log appears here live.`
@@ -309,21 +332,14 @@ export function LogsPage() {
                     Show it
                   </button>
                 </>
-              ) : source === "game" && !gameLog.files.length ? (
-                // Not a failure: this server's Palworld writes to stdout (the
-                // system journal), so there is no file under Pal/Saved/Logs to
-                // tail. The same output is in the boot log, which reads the
-                // console — so point there rather than showing an empty box.
+              ) : journalFallback ? (
+                // Falling back to the console already; nothing tagged `game` has
+                // come through yet (a freshly started server, or a quiet one).
                 <>
-                  This server's Palworld process logs to the system journal, not to a file, so there's
-                  nothing to tail here.{" "}
-                  <button
-                    className="underline hover:text-fg"
-                    onClick={() => setSource("boot")}
-                  >
-                    Open VM boot &amp; system
-                  </button>{" "}
-                  — it carries the server's own output too.
+                  No game output in the console buffer yet.{" "}
+                  <button className="underline hover:text-fg" onClick={() => setSource("boot")}>
+                    See the full boot log
+                  </button>
                 </>
               ) : (
                 "No output yet."
