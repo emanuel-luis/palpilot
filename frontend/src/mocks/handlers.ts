@@ -340,6 +340,41 @@ export async function handle(ctx: Ctx): Promise<Response> {
     return json({ ok: true, error: null, started: true, job: fx.update.job });
   }
 
+  // Persisted metric history (the agent writes one sample a minute to the data
+  // disk). Synthesised here so the range selector and the gap rendering have
+  // something realistic to work against.
+  if (path === "/api/metrics/history" && method === "GET") {
+    const since = Number(query.get("since") || 0);
+    const now = Math.floor(Date.now() / 1000);
+    const step = 60;
+    const from = since > 0 ? Math.max(since, now - 7 * 24 * 3600) : now - 6 * 3600;
+    const samples = [];
+    for (let t = from; t <= now; t += step) {
+      // A believable shape, plus a deliberate hole to exercise "the VM was off".
+      const age = now - t;
+      if (age > 3600 * 2 && age < 3600 * 3) continue;
+      const wave = Math.sin(t / 900) * 12;
+      samples.push({
+        t,
+        cpu: Math.max(2, 18 + wave),
+        mem: Math.max(5, 42 + wave / 3),
+        disk: 19,
+        rx: Math.max(0, 4000 + wave * 200),
+        tx: Math.max(0, 9000 + wave * 400),
+        players: age < 3600 ? 2 : 0,
+        fps: 60 - Math.abs(wave) / 6,
+        frametime: 16.7,
+        uptime: 3600 * 4 - age,
+        up: true,
+      });
+    }
+    return json({
+      ok: true, error: null, samples, count: samples.length,
+      truncated: false, sample_seconds: step,
+      last_sync: now - 300, last_error: null,
+    });
+  }
+
   // ── saves ───────────────────────────────────────────────────────────
   if (path === "/api/saves" && method === "GET") return json({ ok: true, error: null, active: fx.saves.active, slots: fx.saves.slots });
   if (path === "/api/saves" && method === "POST") {
