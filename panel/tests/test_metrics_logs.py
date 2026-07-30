@@ -169,6 +169,52 @@ class TestReadLog(unittest.TestCase):
         self.assertEqual(r["lines"], [])
         self.assertEqual(r["file"], "")
 
+    def test_missing_directory_reports_where_it_looked(self):
+        # "The Logs tab is empty" was indistinguishable from a broken reader, so
+        # the empty answer now carries the directories checked and their contents.
+        panel.LOGS_DIR = os.path.join(self.dir, "nope")
+        r = panel.read_log()
+        self.assertTrue(r["ok"])
+        locs = r["locations"]
+        self.assertTrue(any(loc["path"] == panel.LOGS_DIR for loc in locs))
+        self.assertTrue(all(loc["exists"] is False for loc in locs))
+
+    def test_empty_directory_is_distinguishable_from_a_missing_one(self):
+        r = panel.read_log()  # self.dir exists but has no log yet
+        primary = next(loc for loc in r["locations"] if loc["path"] == panel.LOGS_DIR)
+        self.assertTrue(primary["exists"])
+        self.assertEqual(primary["entries"], [])
+
+    def test_non_log_files_are_listed_but_not_tailed(self):
+        with open(os.path.join(self.dir, "notes.md"), "w", encoding="utf-8") as f:
+            f.write("not a log")
+        r = panel.read_log()
+        self.assertEqual(r["file"], "")  # nothing tailable
+        primary = next(loc for loc in r["locations"] if loc["path"] == panel.LOGS_DIR)
+        self.assertIn("notes.md", primary["entries"])  # but visible for diagnosis
+
+    def test_txt_logs_are_picked_up_too(self):
+        # Palworld/Steam drop .txt alongside .log (content_log.txt, crash notes).
+        with open(os.path.join(self.dir, "server.txt"), "w", encoding="utf-8") as f:
+            f.write("hello\n")
+        r = panel.read_log()
+        self.assertEqual(r["file"], "server.txt")
+        self.assertEqual(r["lines"], ["hello"])
+
+    def test_secondary_directories_are_searched(self):
+        backup = os.path.join(self.dir, "Backup")
+        os.makedirs(backup)
+        with open(os.path.join(backup, "Pal-old.log"), "w", encoding="utf-8") as f:
+            f.write("archived\n")
+        names = [f["name"] for f in panel._log_files()]
+        self.assertIn("Pal-old.log", names)
+
+    def test_response_never_leaks_absolute_paths(self):
+        self.write("x\n")
+        r = panel.read_log()
+        for f in r["files"]:
+            self.assertNotIn("path", f)
+
     def test_tail_caps_at_max_lines(self):
         self.write("".join(f"line {i}\n" for i in range(1, 9)))
         r = panel.read_log()
