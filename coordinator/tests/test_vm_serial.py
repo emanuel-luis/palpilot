@@ -21,6 +21,21 @@ if _HERE not in sys.path:
 from test_static_routes import _Req, main  # noqa: E402
 
 
+class _SerialRequest:
+    """Stub of compute_v1.GetSerialPortOutputInstanceRequest."""
+
+    def __init__(self, project=None, zone=None, instance=None, port=None, start=None):
+        self.project = project
+        self.zone = zone
+        self.instance = instance
+        self.port = port
+        self.start = start
+
+
+# The stubbed compute_v1 module needs the request type, because main.py builds one.
+main.compute_v1.GetSerialPortOutputInstanceRequest = _SerialRequest
+
+
 class _Serial:
     """Stands in for compute's SerialPortOutput (note the `next_` field name)."""
 
@@ -31,17 +46,25 @@ class _Serial:
 
 
 class _Inst:
+    """Fake InstancesClient that mirrors the REAL signature.
+
+    Deliberately strict: `get_serial_port_output` takes only `request`, exactly
+    like the client, which flattens project/zone/instance and nothing else. The
+    first version of this fake accepted **kw, so it happily swallowed
+    `port=1, start=N` and the tests passed while production raised
+    "unexpected keyword argument 'port'" on every call."""
+
     def __init__(self, status="RUNNING", serial=None, raises=False):
         self._status = status
         self._serial = serial or _Serial("", 0, 0)
         self._raises = raises
-        self.calls = []
+        self.requests = []
 
     def get(self, **kw):
         return type("I", (), {"status": self._status})()
 
-    def get_serial_port_output(self, **kw):
-        self.calls.append(kw)
+    def get_serial_port_output(self, request=None):
+        self.requests.append(request)
         if self._raises:
             raise RuntimeError("resource is not ready")
         return self._serial
@@ -77,12 +100,15 @@ class VmSerialRoute(unittest.TestCase):
         self.assertIn("boot line 2", body["contents"])
         self.assertEqual(body["next"], 24)
 
-    def test_start_offset_is_passed_through_for_tailing(self):
+    def test_start_offset_and_port_travel_in_the_request_object(self):
         inst = _Inst(serial=_Serial("", start=500, next_=500))
         main._inst = inst
         _get(500)
-        self.assertEqual(inst.calls[0]["start"], 500)
-        self.assertEqual(inst.calls[0]["port"], 1)
+        req = inst.requests[0]
+        self.assertEqual(req.start, 500)
+        self.assertEqual(req.port, 1)  # port 1 is the console
+        self.assertEqual(req.instance, main.VM_INSTANCE)
+        self.assertEqual(req.zone, main.VM_ZONE)
 
     def test_garbage_start_does_not_500(self):
         main._inst = _Inst(serial=_Serial("x", 0, 1))
@@ -102,7 +128,7 @@ class VmSerialRoute(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertFalse(body["available"])
         self.assertEqual(body["vm_status"], "TERMINATED")
-        self.assertEqual(inst.calls, [])  # never even asked
+        self.assertEqual(inst.requests, [])  # never even asked
 
     def test_serial_read_failure_degrades_quietly(self):
         main._inst = _Inst(raises=True)
