@@ -63,6 +63,21 @@ function seed() {
       last_run: null as any,
       cooldown: {} as any,
     },
+    // Shape mirrors real serial output: startup-script echoes, systemd unit
+    // transitions, the game-version reconcile, then the game's own stdout.
+    serialLog: [
+      "2026-07-30T16:22:41+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Starting startup scripts",
+      "2026-07-30T16:22:44+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Mounting data disk at /home/steam",
+      "2026-07-30T16:22:58+00:00 palworld-tf-vm google_metadata_script_runner[1238]: PalServer already present on data disk; skipping steamcmd download",
+      "2026-07-30T16:23:31+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Installing admin panel virtualenv (once)",
+      "2026-07-30T16:23:52+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Writing systemd units",
+      "2026-07-30T16:23:58+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Reconciling the Palworld game version (auto-update / per-save pin)",
+      '2026-07-30T16:24:05+00:00 palworld-tf-vm google_metadata_script_runner[1238]: game-sync: {"ok": true, "installed": "24370498", "up_to_date": true}',
+      "2026-07-30T16:24:07+00:00 palworld-tf-vm systemd[1]: Started palworld.service - Palworld Server.",
+      "2026-07-30T16:24:09+00:00 palworld-tf-vm google_metadata_script_runner[1238]: Finished running startup scripts",
+      "2026-07-30T16:24:22+00:00 palworld-tf-vm PalServer.sh[2830]: [S_API] SteamAPI_Init(): Loaded local 'steamclient.so' OK.",
+      "2026-07-30T16:24:35+00:00 palworld-tf-vm PalServer.sh[2830]: [LOG] Setup UPnP finished.",
+    ] as string[],
     backups: {
       "world-a": [
         { ref: "b1", file: "world-a-2026-07-25-14-05.tar.gz", size: 512_000_000, created: now - 3600 * 5, location: "local" as const },

@@ -9,7 +9,7 @@
 // enough to keep scrolling smooth without shipping another dependency.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Pause, Play, Search, Trash2 } from "lucide-react";
-import { useLogStream } from "@/hooks/useTelemetry";
+import { useLogStream, useBootLogStream } from "@/hooks/useTelemetry";
 import { PageHeader, OfflineNotice } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,8 +29,49 @@ function toneFor(line: string): string {
   return "text-muted";
 }
 
+/** Which log we're reading. `boot` is the VM's serial console (startup script,
+ *  systemd units, the game-version reconcile, PalServer's own stdout); `game` is
+ *  the Unreal log tree on the data disk. Only one polls at a time. */
+type Source = "game" | "boot";
+
+function SourceTabs({ source, onChange }: { source: Source; onChange: (s: Source) => void }) {
+  const tabs: { id: Source; label: string; hint: string }[] = [
+    { id: "game", label: "Game server", hint: "Unreal's own log from the data disk. Needs the VM running." },
+    {
+      id: "boot",
+      label: "VM boot & system",
+      hint: "Serial console: provisioning, systemd units, the game-version reconcile. Readable while the VM boots.",
+    },
+  ];
+  return (
+    <div className="mt-4 flex gap-1" role="tablist" aria-label="Log source">
+      {tabs.map((t) => (
+        <Tip key={t.id} label={t.hint}>
+          <button
+            role="tab"
+            aria-selected={source === t.id}
+            onClick={() => onChange(t.id)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs transition-colors duration-fast",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              source === t.id
+                ? "bg-signal/12 font-medium text-fg"
+                : "text-muted hover:bg-surface-2 hover:text-fg",
+            )}
+          >
+            {t.label}
+          </button>
+        </Tip>
+      ))}
+    </div>
+  );
+}
+
 export function LogsPage() {
-  const log = useLogStream(true);
+  const [source, setSource] = useState<Source>("game");
+  const gameLog = useLogStream(source === "game");
+  const bootLog = useBootLogStream(source === "boot");
+  const log = source === "game" ? gameLog : bootLog;
   const [filter, setFilter] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,18 +113,25 @@ export function LogsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${log.file || "palworld"}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.log`;
+    const base = source === "boot" ? "palworld-vm-boot" : log.file || "palworld";
+    a.download = `${base}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.log`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }
 
-  if (log.offline) {
+  // Only the GAME log needs the VM up. The boot log deliberately keeps rendering
+  // while the VM is off/booting — that is when you most want to read it — so it
+  // gets an inline note instead of taking over the page.
+  if (source === "game" && log.offline) {
     return (
       <>
         <PageHeader title="Logs" description="Output from the Palworld server process." />
-        <OfflineNotice action="read logs" />
+        <SourceTabs source={source} onChange={setSource} />
+        <div className="mt-4">
+          <OfflineNotice action="read the game log" />
+        </div>
       </>
     );
   }
@@ -96,7 +144,11 @@ export function LogsPage() {
     <>
       <PageHeader
         title="Logs"
-        description="Output from the Palworld server process, tailed from the VM. Polled, not streamed."
+        description={
+          source === "game"
+            ? "Output from the Palworld server process, tailed from the VM. Polled, not streamed."
+            : "The VM's boot story: provisioning, systemd units, the game-version reconcile and the server's own startup. Read from the serial console, so it works while the VM is still booting."
+        }
         actions={
           <>
             <Tip label={log.paused ? "Resume polling" : "Pause polling — nothing is fetched while paused"}>
@@ -119,7 +171,9 @@ export function LogsPage() {
         }
       />
 
-      <Card className="overflow-hidden">
+      <SourceTabs source={source} onChange={setSource} />
+
+      <Card className="mt-4 overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 border-b border-line/60 px-4 py-2.5">
           <Badge tone={log.paused ? "neutral" : "live"} dot pulse={!log.paused}>
             {log.paused ? "Paused" : "Live"}
@@ -159,6 +213,22 @@ export function LogsPage() {
         {log.error ? (
           <div className="border-b border-danger/30 bg-danger/10 px-4 py-2 text-xs text-danger">
             Couldn't read the log: {log.error}
+          </div>
+        ) : null}
+
+        {source === "boot" && !bootLog.available ? (
+          <div className="border-b border-line/60 bg-surface-2/60 px-4 py-2 text-xs text-muted">
+            {bootLog.vmStatus && bootLog.vmStatus !== "RUNNING"
+              ? `The VM is ${bootLog.vmStatus.toLowerCase()} — the serial console only exists while it runs. Start the server and the boot log appears here live.`
+              : "Waiting for the VM's serial console…"}
+          </div>
+        ) : null}
+
+        {/* GCP's serial buffer is a ring, so very long uptimes lose the earliest
+            boot lines. Better to admit the hole than imply a complete log. */}
+        {source === "boot" && bootLog.gap ? (
+          <div className="border-b border-warn/30 bg-warn/10 px-4 py-2 text-xs text-warn">
+            Some earlier output aged out of the VM's serial buffer, so this view starts mid-stream.
           </div>
         ) : null}
 
