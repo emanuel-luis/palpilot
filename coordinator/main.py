@@ -559,8 +559,13 @@ def _vm_serial(start=0):
     GCP returns `next` as the offset to poll from, so a client tails by feeding
     the previous `next` back in. Output older than the ring buffer is dropped by
     GCP, which is what `start` moving forward on its own indicates."""
+    # `port` and `start` are NOT among the flattened keyword arguments the client
+    # accepts (only project/zone/instance are), so they have to travel in a
+    # request object -- passing them as kwargs raises TypeError at runtime.
     r = _inst.get_serial_port_output(
-        project=PROJECT_ID, zone=VM_ZONE, instance=VM_INSTANCE, port=1, start=start
+        request=compute_v1.GetSerialPortOutputInstanceRequest(
+            project=PROJECT_ID, zone=VM_ZONE, instance=VM_INSTANCE, port=1, start=start
+        )
     )
     return {
         "contents": _redact(r.contents or ""),

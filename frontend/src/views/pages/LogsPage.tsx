@@ -244,7 +244,27 @@ export function LogsPage() {
             <p className="text-faint">Reading the log…</p>
           ) : !rows.length ? (
             <p className="text-faint">
-              {filter ? "No lines match that filter." : "No output yet."}
+              {filter ? (
+                "No lines match that filter."
+              ) : source === "game" && !gameLog.files.length ? (
+                // Not a failure: this server's Palworld writes to stdout (the
+                // system journal), so there is no file under Pal/Saved/Logs to
+                // tail. The same output is in the boot log, which reads the
+                // console — so point there rather than showing an empty box.
+                <>
+                  This server's Palworld process logs to the system journal, not to a file, so there's
+                  nothing to tail here.{" "}
+                  <button
+                    className="underline hover:text-fg"
+                    onClick={() => setSource("boot")}
+                  >
+                    Open VM boot &amp; system
+                  </button>{" "}
+                  — it carries the server's own output too.
+                </>
+              ) : (
+                "No output yet."
+              )}
             </p>
           ) : (
             // Spacer divs above/below keep the scrollbar honest while only the
