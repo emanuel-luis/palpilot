@@ -2374,7 +2374,16 @@ def start_stats_collector() -> None:
 # the places crash/backup logs land. Searching a list rather than one directory
 # because "the Logs tab is empty" gave no way to tell a missing directory from a
 # game that simply never writes a file.
-LOG_EXTENSIONS = (".log", ".txt")
+def _is_log_name(name: str) -> bool:
+    """`.log` anywhere, plus log-ish `.txt` (Steam writes content_log.txt).
+
+    Not every .txt: accepting the extension outright picked up
+    Pal/Binaries/Linux/steam_appid.txt and offered a one-line "log" containing
+    the app id."""
+    low = name.lower()
+    if low.endswith(".log"):
+        return True
+    return low.endswith(".txt") and "log" in low
 
 
 def _log_dirs() -> list:
@@ -2410,7 +2419,7 @@ def _log_files() -> list:
     seen = set()
     for d in _log_dirs():
         try:
-            names = [n for n in os.listdir(d) if n.lower().endswith(LOG_EXTENSIONS)]
+            names = [n for n in os.listdir(d) if _is_log_name(n)]
         except OSError:
             continue
         for n in names:
@@ -2497,6 +2506,11 @@ def read_log(name: str = "", cursor: int = -1, max_bytes: int = 0) -> dict:
         "lines": lines,
         "rotated": rotated,
         "truncated": truncated,
+        # Always, not just when empty: knowing which directory a file came from
+        # (and what else is sitting there) is what makes "why am I seeing this?"
+        # answerable. It is four directory listings, capped -- cheap next to the
+        # log lines in the same response.
+        "locations": log_locations(),
     }
 
 

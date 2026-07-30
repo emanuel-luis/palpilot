@@ -193,13 +193,17 @@ class TestReadLog(unittest.TestCase):
         primary = next(loc for loc in r["locations"] if loc["path"] == panel.LOGS_DIR)
         self.assertIn("notes.md", primary["entries"])  # but visible for diagnosis
 
-    def test_txt_logs_are_picked_up_too(self):
-        # Palworld/Steam drop .txt alongside .log (content_log.txt, crash notes).
-        with open(os.path.join(self.dir, "server.txt"), "w", encoding="utf-8") as f:
+    def test_log_ish_txt_is_picked_up_but_other_txt_is_not(self):
+        # content_log.txt is Steam's; steam_appid.txt is not a log at all, and
+        # accepting every .txt offered it as one.
+        with open(os.path.join(self.dir, "content_log.txt"), "w", encoding="utf-8") as f:
             f.write("hello\n")
+        with open(os.path.join(self.dir, "steam_appid.txt"), "w", encoding="utf-8") as f:
+            f.write("2394010")
         r = panel.read_log()
-        self.assertEqual(r["file"], "server.txt")
-        self.assertEqual(r["lines"], ["hello"])
+        names = [f["name"] for f in r["files"]]
+        self.assertIn("content_log.txt", names)
+        self.assertNotIn("steam_appid.txt", names)
 
     def test_secondary_directories_are_searched(self):
         backup = os.path.join(self.dir, "Backup")
