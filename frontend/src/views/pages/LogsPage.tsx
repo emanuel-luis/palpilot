@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { isNotable, isPollNoise, parseLogLine, type LogSource } from "@/lib/logs";
 
 const ROW_HEIGHT = 20; // must match leading-5 below
 const OVERSCAN = 20;
@@ -27,6 +28,32 @@ function toneFor(line: string): string {
   if (/\bwarn(ing)?\b/i.test(line)) return "text-warn";
   if (/\b(display|info|log[A-Z])/.test(line)) return "text-fg/80";
   return "text-muted";
+}
+
+/** One colour per origin, so the eye can separate "the game said" from "the
+ *  agent said" without reading the label every time. */
+const SOURCE_TONE: Record<LogSource, string> = {
+  startup: "text-signal",
+  game: "text-ok",
+  agent: "text-fg/70",
+  systemd: "text-warn",
+  system: "text-faint",
+  raw: "text-faint",
+};
+
+/** A parsed row: time and origin in fixed columns, message taking the rest. */
+function LogRow({ text }: { text: string }) {
+  const p = parseLogLine(text);
+  const notable = isNotable(text);
+  return (
+    <div className="flex h-5 gap-2 whitespace-pre" title={text}>
+      <span className="w-14 shrink-0 text-faint">{p.time}</span>
+      <span className={cn("w-16 shrink-0 truncate", SOURCE_TONE[p.source])}>{p.label}</span>
+      <span className={cn("truncate", notable ? "text-fg" : toneFor(p.message))}>
+        {p.message}
+      </span>
+    </div>
+  );
 }
 
 /** Which log we're reading. `boot` is the VM's serial console (startup script,
@@ -73,16 +100,27 @@ export function LogsPage() {
   const bootLog = useBootLogStream(source === "boot");
   const log = source === "game" ? gameLog : bootLog;
   const [filter, setFilter] = useState("");
+  // On by default: a quiet server's log is ~90% poll chatter, and a first-time
+  // view full of "REST accessed endpoint /v1/api/players OK" teaches nothing.
+  const [hideNoise, setHideNoise] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(480);
 
+  // Noise filtering happens before the text filter so the "N hidden" count means
+  // "hidden as noise", not "didn't match your search".
+  const denoised = useMemo(
+    () => (hideNoise ? log.lines.filter((l) => !isPollNoise(l.text)) : log.lines),
+    [log.lines, hideNoise],
+  );
+  const noiseHidden = log.lines.length - denoised.length;
+
   const rows = useMemo(() => {
-    if (!filter.trim()) return log.lines;
+    if (!filter.trim()) return denoised;
     const needle = filter.toLowerCase();
-    return log.lines.filter((l) => l.text.toLowerCase().includes(needle));
-  }, [log.lines, filter]);
+    return denoised.filter((l) => l.text.toLowerCase().includes(needle));
+  }, [denoised, filter]);
 
   // Follow the tail unless the user has scrolled away or paused.
   useEffect(() => {
@@ -205,8 +243,24 @@ export function LogsPage() {
             />
           </div>
 
+          {/* Never silently drop output: the count says exactly how much is
+              hidden, and one click brings it back. */}
+          <Tip label="Health polling: the console asks the server for info/metrics/players every few seconds, and each poll writes a line from both the game and the agent. Hidden by default because it crowds out everything else.">
+            <button
+              onClick={() => setHideNoise(!hideNoise)}
+              aria-pressed={hideNoise}
+              className={cn(
+                "rounded-md px-2 py-1 text-2xs transition-colors duration-fast",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                hideNoise ? "bg-surface-2 text-muted" : "text-faint hover:text-fg",
+              )}
+            >
+              {hideNoise ? `Polling hidden${noiseHidden ? ` (${noiseHidden})` : ""}` : "Polling shown"}
+            </button>
+          </Tip>
+
           <span className="num font-mono text-2xs text-faint">
-            {filter ? `${rows.length}/${log.lines.length}` : log.lines.length} lines
+            {filter ? `${rows.length}/${denoised.length}` : rows.length} lines
           </span>
         </div>
 
@@ -246,6 +300,15 @@ export function LogsPage() {
             <p className="text-faint">
               {filter ? (
                 "No lines match that filter."
+              ) : noiseHidden > 0 ? (
+                // Everything received so far was poll chatter. Say that, instead
+                // of implying the log is empty.
+                <>
+                  Nothing but health polling so far ({noiseHidden} lines).{" "}
+                  <button className="underline hover:text-fg" onClick={() => setHideNoise(false)}>
+                    Show it
+                  </button>
+                </>
               ) : source === "game" && !gameLog.files.length ? (
                 // Not a failure: this server's Palworld writes to stdout (the
                 // system journal), so there is no file under Pal/Saved/Logs to
@@ -272,13 +335,7 @@ export function LogsPage() {
             <div style={{ height: rows.length * ROW_HEIGHT, position: "relative" }}>
               <div style={{ transform: `translateY(${first * ROW_HEIGHT}px)` }}>
                 {slice.map((l) => (
-                  <div
-                    key={l.id}
-                    className={cn("h-5 whitespace-pre truncate", toneFor(l.text))}
-                    title={l.text}
-                  >
-                    {l.text}
-                  </div>
+                  <LogRow key={l.id} text={l.text} />
                 ))}
               </div>
             </div>
