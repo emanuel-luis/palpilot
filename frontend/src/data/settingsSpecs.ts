@@ -8,8 +8,12 @@
 // reset control is disabled and says why, rather than guessing a value and
 // writing it into someone's live server.
 //
-// Ranges are Palworld's documented practical bounds. Where the game accepts more
-// than is sensible the range is left open (undefined) rather than invented.
+// Upper bounds are deliberately NOT enforced. Palworld's documented ranges are
+// practical advice, not hard limits, and the console used to clamp to them —
+// silently rewriting a rate of 50 down to 20. So `max` is now set only where a
+// larger value is unusable rather than merely unusual: the port fields, which
+// cannot exceed 65535. `min` stays everywhere it guards a value the game
+// rejects outright (a port below 1024, a negative rate).
 
 export type FieldKind = "bool" | "enum" | "int" | "float" | "text" | "secret";
 
@@ -122,14 +126,14 @@ export const KEY_TAB: Record<string, TabId> = {
   RCONEnabled: "admin", RCONPort: "admin", LogFormatType: "admin", bAllowClientMod: "admin",
 };
 
-const RATE = { kind: "float" as const, default: "1.000000", min: 0.1, max: 20, precision: 6 };
+const RATE = { kind: "float" as const, default: "1.000000", min: 0.1, precision: 6 };
 
 export const SPECS: Record<string, FieldSpec> = {
   // --- general
   ServerName: { kind: "text", default: "Default Palworld Server" },
   ServerDescription: { kind: "text", default: "" },
-  ServerPlayerMaxNum: { kind: "int", default: "32", min: 1, max: 32, precision: 0 },
-  CoopPlayerMaxNum: { kind: "int", default: "4", min: 1, max: 4, precision: 0 },
+  ServerPlayerMaxNum: { kind: "int", default: "32", min: 1, precision: 0 },
+  CoopPlayerMaxNum: { kind: "int", default: "4", min: 1, precision: 0 },
   ServerPassword: { kind: "secret", default: "" },
   PublicPort: { kind: "int", default: "8211", min: 1024, max: 65535, precision: 0 },
   PublicIP: { kind: "text", default: "" },
@@ -153,7 +157,7 @@ export const SPECS: Record<string, FieldSpec> = {
   // --- world
   DayTimeSpeedRate: RATE,
   NightTimeSpeedRate: RATE,
-  autoSaveSpan: { kind: "float", default: "30.000000", min: 1, max: 3600, precision: 6 },
+  autoSaveSpan: { kind: "float", default: "30.000000", min: 1, precision: 6 },
   bIsUseBackupSaveData: { kind: "bool", default: "True" },
   bEnableInvaderEnemy: { kind: "bool", default: "True" },
   EnablePredatorBossPal: { kind: "bool", default: "True" },
@@ -180,26 +184,26 @@ export const SPECS: Record<string, FieldSpec> = {
   PalStaminaDecreaceRate: RATE,
   PalAutoHPRegeneRate: RATE,
   PalAutoHpRegeneRateInSleep: RATE,
-  PalEggDefaultHatchingTime: { kind: "float", default: "72.000000", min: 0, max: 240, precision: 6 },
+  PalEggDefaultHatchingTime: { kind: "float", default: "72.000000", min: 0, precision: 6 },
 
   // --- resources
   CollectionDropRate: RATE,
   CollectionObjectHpRate: RATE,
   CollectionObjectRespawnSpeedRate: RATE,
   EnemyDropItemRate: RATE,
-  DropItemAliveMaxHours: { kind: "float", default: "1.000000", min: 0, max: 240, precision: 6 },
-  SupplyDropSpan: { kind: "int", default: "180", min: 0, max: 1440, precision: 0 },
+  DropItemAliveMaxHours: { kind: "float", default: "1.000000", min: 0, precision: 6 },
+  SupplyDropSpan: { kind: "int", default: "180", min: 0, precision: 0 },
   WorkSpeedRate: RATE,
 
   // --- structures
   BuildObjectDamageRate: RATE,
-  BuildObjectDeteriorationDamageRate: { kind: "float", default: "1.000000", min: 0, max: 20, precision: 6 },
-  BaseCampMaxNum: { kind: "int", default: "128", min: 1, max: 128, precision: 0 },
-  BaseCampWorkerMaxNum: { kind: "int", default: "15", min: 1, max: 20, precision: 0 },
+  BuildObjectDeteriorationDamageRate: { kind: "float", default: "1.000000", min: 0, precision: 6 },
+  BaseCampMaxNum: { kind: "int", default: "128", min: 1, precision: 0 },
+  BaseCampWorkerMaxNum: { kind: "int", default: "15", min: 1, precision: 0 },
 
   // --- performance
-  DropItemMaxNum: { kind: "int", default: "3000", min: 100, max: 20000, precision: 0 },
-  ChatPostLimitPerMinute: { kind: "int", default: "10", min: 1, max: 600, precision: 0 },
+  DropItemMaxNum: { kind: "int", default: "3000", min: 100, precision: 0 },
+  ChatPostLimitPerMinute: { kind: "int", default: "10", min: 1, precision: 0 },
 
   // --- admin
   AdminPassword: { kind: "secret", default: "" },
