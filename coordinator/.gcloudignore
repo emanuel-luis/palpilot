@@ -1,0 +1,10 @@
+# Explicit upload set for `gcloud run deploy --source=coordinator`. gcloud only
+# derives ignores from a .gitignore inside the source dir, and the built console
+# (index.html, assets/) is gitignored at the repo root, so this file stands alone
+# and must not include .gitignore.
+# List what gets uploaded: gcloud meta list-files-for-upload coordinator
+.gcloudignore
+.dockerignore
+tests/
+__pycache__/
+*.pyc
