@@ -1,10 +1,15 @@
 # CI/CD — auto-deploy on push
 
+> **Deploys are paused.** The GCP project is offline by choice (billing disabled), so the deploy jobs
+> are gated on the repository variable `DEPLOY_ENABLED`. While it is unset, a push to `main` runs the CI
+> checks and skips both deploy jobs. To bring the server back, follow [`REVIVAL.md`](REVIVAL.md) and
+> then set `DEPLOY_ENABLED=true` under Settings → Secrets and variables → Actions → Variables.
+
 `.github/workflows/deploy.yml` deploys automatically when you push to `main`:
 
 | Changed paths | Action | Player impact |
 |---|---|---|
-| `frontend/**` or `coordinator/**` | build the single-file UI + `gcloud functions deploy palworld-coordinator` | none (serverless) |
+| `frontend/**` or `coordinator/**` | build the console + `gcloud run deploy palpilot-coordinator --source=coordinator` | none (serverless) |
 | `panel/**` | push panel code to the panel bucket (fetched by the VM on next boot) | none (no live restart) |
 
 **It never runs Terraform and never touches the VM** — so it can't recreate the machine or interrupt a live game.
