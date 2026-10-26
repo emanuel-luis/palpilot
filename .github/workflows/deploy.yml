@@ -44,9 +44,10 @@ jobs:
       frontend: ${{ steps.f.outputs.frontend }}
       panel: ${{ steps.f.outputs.panel }}
     steps:
+      # Credentials stay persisted here on purpose: on push events paths-filter runs
+      # `git fetch origin <before-sha>`, which needs them in this private repo. The
+      # token is contents:read only.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: f
         with:
