@@ -51,7 +51,15 @@ def _call(method, path, body=None):
 
 
 def main():
-    missing = [k for k, v in (("DISCORD_BOT_TOKEN", TOKEN), ("DISCORD_APP_ID", APP_ID), ("DISCORD_GUILD_ID", GUILD_ID)) if not v]
+    missing = [
+        k
+        for k, v in (
+            ("DISCORD_BOT_TOKEN", TOKEN),
+            ("DISCORD_APP_ID", APP_ID),
+            ("DISCORD_GUILD_ID", GUILD_ID),
+        )
+        if not v
+    ]
     if missing:
         print(f"missing env: {', '.join(missing)}")
         return 2

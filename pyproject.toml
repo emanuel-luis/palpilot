@@ -1,0 +1,38 @@
+[project]
+name = "palpilot-dev"
+version = "0.0.0"
+description = "Dev tooling only. The apps ship from coordinator/ and panel/, not from this project."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["frontend", ".terraform", ".build", "coordinator/assets", ".claude"]
+
+[tool.ruff.lint]
+# Explicit, not the ruff default set: defaults change between ruff releases.
+select = ["E4", "E7", "E9", "F", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Existing debt (one blind except); fixed in an app-code PR.
+"panel/panel.py" = ["BLE001"]
+
+[tool.ruff.format]
+# App code was never formatted with ruff; reformatting it would touch deploy paths.
+exclude = ["coordinator/**", "panel/**"]
+
+[tool.pytest.ini_options]
+testpaths = ["coordinator/tests", "panel/tests"]
+addopts = "-ra --strict-markers --strict-config"
+timeout = 120
