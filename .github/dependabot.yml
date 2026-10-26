@@ -28,3 +28,7 @@ updates:
     groups:
       terraform:
         patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /coordinator
+    schedule:
+      interval: weekly
