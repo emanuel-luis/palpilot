@@ -16,7 +16,7 @@ Keyless auth via **Workload Identity Federation** (no service-account JSON keys 
 
 ## CI checks
 
-`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` that touch none of the deploy paths, weekly, and by hand. Pushes that do touch `coordinator/`, `frontend/` or `panel/` get the same checks through `deploy.yml`, which calls `ci.yml` as its first job; both deploy jobs `needs` it, so a failed check blocks the deploy.
+`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` that change at least one file outside the deploy paths, weekly, and by hand. Pushes that do touch `coordinator/`, `frontend/` or `panel/` get the same checks through `deploy.yml`, which calls `ci.yml` as its first job; both deploy jobs `needs` it, so a failed check blocks the deploy. A push that mixes deploy paths with other files runs the checks twice (once on its own, once through `deploy.yml`); that is harmless.
 
 | Job | What it checks |
 |---|---|
