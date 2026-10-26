@@ -43,3 +43,13 @@ __pycache__/
 
 # Scratch prompts / working docs that are not part of the product
 LOVABLE_PROMPT.md
+
+# Local tooling and secrets
+.env
+.env.*
+!.env.example
+backend.hcl
+/.state-backup/
+.venv/
+.ruff_cache/
+.pytest_cache/
