@@ -227,6 +227,7 @@ export async function handle(ctx: Ctx): Promise<Response> {
     const size = joined.length;
     const rotated = cursor > size;
     const start = cursor < 0 || rotated ? Math.max(0, size - 8 * 1024) : Math.min(cursor, size);
+    // eslint-disable-next-line prefer-const -- left as is so the shipped bundle stays byte-identical
     let chunk = joined.slice(start);
     let lines = chunk.length ? chunk.split("\n").filter(Boolean) : [];
     if ((cursor < 0 || rotated) && start > 0 && lines.length) lines = lines.slice(1);
