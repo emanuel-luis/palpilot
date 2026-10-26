@@ -1,8 +1,8 @@
 name: security
 
-# Dependency audits. Findings are reported, not fixed here.
-# npm audit joins in the frontend tooling PR, together with the fix for the zod advisory
-# (GHSA-mrhx-c7xc-m3w5) it reports today; that fix touches frontend/, a deploy path.
+# Dependency audits (pip-audit for the coordinator, npm audit for the console).
+# Findings are reported, not fixed here. npm audit fails on high or critical in
+# production dependencies only; dev-only findings stay out of the gate.
 
 on:
   schedule:
@@ -11,6 +11,8 @@ on:
   pull_request:
     paths:
       - coordinator/requirements.txt
+      - frontend/package.json
+      - frontend/package-lock.json
       - .github/workflows/security.yml
 
 permissions:
@@ -29,3 +31,19 @@ jobs:
           enable-cache: true
       - run: uvx --from pip-audit==2.10.1 pip-audit -r coordinator/requirements.txt
 
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Node 20 matches ci.yml and deploy.yml (EOL; bump together).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+      # Reads package-lock.json; no install needed.
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high

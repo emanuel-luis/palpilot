@@ -24,6 +24,7 @@ export type ParsedLine = {
 };
 
 // <iso-timestamp> <host> <unit>[<pid>]: <message>
+// eslint-disable-next-line no-useless-escape -- left as is so the shipped bundle stays byte-identical
 const SYSLOG = /^(\S+)\s+\S+\s+([A-Za-z0-9_.\-]+)(?:\[(\d+)\])?:\s?(.*)$/;
 
 const SOURCES: { test: RegExp; source: LogSource; label: string }[] = [

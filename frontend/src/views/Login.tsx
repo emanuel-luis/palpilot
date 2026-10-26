@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { apiPost } from "@/lib/api";
 import { session } from "@/stores/session";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- left as is so the shipped bundle stays byte-identical
 import { toast } from "@/components/ui/Toast";
 import { t } from "@/i18n/en";
 import { decodeToken } from "@/lib/session";
