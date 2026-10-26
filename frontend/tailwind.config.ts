@@ -15,7 +15,8 @@ import type { Config } from "tailwindcss";
  */
 export default {
   darkMode: ["class", '[data-theme="dark"]'],
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // Tests are not part of the UI: keep them out of the class scan so they cannot change the CSS.
+  content: ["./index.html", "./src/**/*.{ts,tsx}", "!./src/__tests__/**"],
   theme: {
     extend: {
       colors: {
