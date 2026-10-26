@@ -58,12 +58,15 @@ cp backend.hcl.example backend.hcl      # fill in the bucket name; backend.hcl i
 # 4.4 Copy the state into the bucket (answer "yes" to the copy prompt)
 terraform init -migrate-state -backend-config=backend.hcl
 
-# 4.5 Check that serial and lineage match the local file, then move the local copies out of the tree
+# 4.5 Serial and lineage must match before and after; then move the local copies out of the tree
+python -c "import json; s=json.load(open('terraform.tfstate')); print(s['serial'], s['lineage'])"
 terraform state pull | python -c "import json,sys; s=json.load(sys.stdin); print(s['serial'], s['lineage'])"
 ```
 
-For a new project, run `terraform init -backend-config=backend.hcl` instead of 4.4; it starts an empty
-remote state. Commit `backend.tf` once the migration is done.
+For a new project, first move `terraform.tfstate*` out of the working tree (otherwise Terraform offers
+to copy the old project's state, secrets included, into the new bucket; answer "no" if asked), then
+run `terraform init -backend-config=backend.hcl` instead of 4.4 to start an empty remote state.
+Commit `backend.tf` once the backend works.
 
 ## 5. Plan, read, apply
 
@@ -78,7 +81,7 @@ disk; a recreated `google_compute_disk.palworld_data` starts with empty worlds. 
 After any VM replace, check that the coordinator can still power the VM (see `CLAUDE.md`):
 
 ```bash
-gcloud compute instances get-iam-policy palworld-tf-vm --zone <ZONE>
+gcloud compute instances get-iam-policy palworld-tf-vm --zone <ZONE> --project <PROJECT_ID>
 ```
 
 An empty `{"etag": ...}` means the binding is gone; re-run `terraform apply`.
@@ -94,6 +97,6 @@ An empty `{"etag": ...}` means the binding is gone; re-run `terraform apply`.
 ## 7. Hardening worth doing at revival
 
 - Close the panel port to the internet with Direct VPC egress ([`SECURITY.md`](SECURITY.md)).
-- Set `enable_secret_manager = true` so the passwords and the internal token leave the instance
-  metadata (this recreates the VM), then rotate all three.
+- Rotate the panel password, the admin password and the internal token. `enable_secret_manager`
+  alone does not remove them from instance metadata or the state; see [`SECURITY.md`](SECURITY.md).
 - Look for a legacy `default-allow-ssh` rule on the `default` network; Terraform does not manage it.
