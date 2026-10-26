@@ -135,6 +135,6 @@ the `container` job in `ci.yml` builds and smoke-tests the same Dockerfile on ev
 ## Analytics
 
 `.github/workflows/analytics.yml` is separate from `ci.yml` so the main CI never installs dbt. It runs on pull requests and
-pushes to main that touch `analytics/**`, `pyproject.toml`, `uv.lock` or the workflow itself (plus manual dispatch):
+pushes to main that touch `analytics/**`, `pyproject.toml`, `uv.lock`, `Makefile` or the workflow itself (plus manual dispatch):
 ruff check and format check on `analytics/`, the analytics tests, then `make demo` (synthetic data, no GCP access, no
-secrets). Locally: `make demo` and `make analytics-test`. Details in `analytics/README.md`.
+secrets). Locally: `make demo` and `make analytics-test` (the demo computes the window end with GNU `date`, so run it on Linux or WSL). Details in `analytics/README.md`.
