@@ -131,3 +131,57 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest
+
+  container:
+    needs: [frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: console-build
+          path: coordinator
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: requirements.lock is up to date
+        run: |
+          uv pip compile coordinator/requirements.txt --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes -o coordinator/requirements.lock
+          git diff --exit-code -- coordinator/requirements.lock || { echo "Stale lock: run 'make lock' and commit it"; exit 1; }
+      - name: Build image
+        run: docker build -t palpilot-coordinator:ci coordinator
+      - name: Container runs as non-root
+        run: |
+          uid=$(docker run --rm --entrypoint id palpilot-coordinator:ci -u)
+          test "$uid" != "0" || { echo "container runs as root"; exit 1; }
+      - name: Smoke
+        run: |
+          # main.py builds GCP clients at import, so it needs credentials that exist
+          # but are fake: nothing here reaches GCP.
+          printf '{"type":"authorized_user","client_id":"ci","client_secret":"ci","refresh_token":"ci"}' > "$RUNNER_TEMP/adc.json"
+          chmod 644 "$RUNNER_TEMP/adc.json"
+          docker run -d --name palpilot-ci -p 8080:8080 \
+            -v "$RUNNER_TEMP/adc.json:/adc.json:ro" \
+            -e GOOGLE_APPLICATION_CREDENTIALS=/adc.json -e GOOGLE_CLOUD_PROJECT=ci \
+            -e PROJECT_ID=ci -e VM_ZONE=ci-a -e VM_INSTANCE=ci \
+            palpilot-coordinator:ci
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8080/ && break
+            sleep 1
+          done
+          code=$(curl -sS -o /tmp/index.html -w '%{http_code}' http://127.0.0.1:8080/)
+          test "$code" = 200 || { echo "GET / returned $code"; exit 1; }
+          asset=$(grep -oE '/assets/[A-Za-z0-9._-]+\.js' /tmp/index.html | head -1)
+          test -n "$asset" || { echo "index.html references no /assets/*.js"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080$asset")
+          test "$code" = 200 || { echo "$asset returned $code"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/overview)
+          test "$code" = 401 || { echo "/api/overview returned $code, expected 401"; exit 1; }
+          echo "console + assets served, API gated"
+      - name: Container logs
+        if: always()
+        run: docker logs palpilot-ci || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f palpilot-ci || true

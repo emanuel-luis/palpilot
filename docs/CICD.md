@@ -108,3 +108,26 @@ gh variable set PANEL_BUCKET     --repo emanuel-luis/palpilot --body "<PANEL_BUC
   smoke test after setup.
 - Simpler alternative to WIF: a service-account JSON key in a `GCP_SA_KEY` secret + `credentials_json:` in the auth
   step. Not recommended (long-lived key), but supported by `google-github-actions/auth`.
+
+---
+
+## Container
+
+The coordinator image (`coordinator/Dockerfile`) is built from source by `gcloud run deploy --source=coordinator`, and
+the `container` job in `ci.yml` builds and smoke-tests the same Dockerfile on every change.
+
+- **Non-root.** The runtime stage runs as a fixed UID (10001). CI fails if `id -u` is 0.
+- **Hashed lock.** Dependencies install from `coordinator/requirements.lock` with `pip --require-hashes`, in a
+  builder stage; only the venv is copied into the runtime image. Edit `coordinator/requirements.txt`, then run
+  `make lock` and commit both. CI regenerates the lock and fails on any diff. The base image is pinned by tag and
+  digest; bump them together.
+- **Console asserted at build time.** `index.html` and `assets/` are build output (gitignored, produced by
+  `npm run build`). The Dockerfile fails the build when they are absent, so an upload without the console can never
+  become an image that serves a blank page.
+- **Smoke.** CI runs the image with fake credentials and no GCP access, then checks `GET /` 200, the first
+  `/assets/*.js` 200 and `GET /api/overview` 401, the same checks as the post-deploy smoke.
+- **Upload set.** `coordinator/.gcloudignore` is explicit and does not include `.gitignore` (the built console is
+  gitignored, and gcloud only reads a `.gitignore` inside the source directory). It excludes `tests/`, bytecode and
+  the ignore files. After `make build`, list what would be uploaded with
+  `gcloud meta list-files-for-upload coordinator` (read-only, local); it must show `index.html`, `assets/*`,
+  `main.py`, `discord_bot.py`, `Dockerfile` and `requirements.*`.
