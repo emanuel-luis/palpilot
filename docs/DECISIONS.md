@@ -16,3 +16,4 @@ Newest last.
 | 9 | 2026-10-26 | Node version in CI | Node 20 in ci.yml, same as deploy.yml. | Parity with deploy. Node 20 is EOL: bump both together later. |
 | 10 | 2026-10-26 | tflint rules disabled | terraform_typed_variables is off (project_id, region, zone lack a type). | Adding type is a .tf edit, out of scope for the CI foundation. Follow-up. |
 | 11 | 2026-10-26 | npm audit in security.yml | Deferred to the frontend tooling PR. | It reports a high zod advisory (GHSA-mrhx-c7xc-m3w5) today; the fix changes frontend/, a deploy path, so it ships with that PR instead of leaving a red check here. |
+| 12 | 2026-10-26 | Provider lock platforms | .terraform.lock.hcl carries h1 hashes for linux_amd64, windows_386, windows_amd64 and darwin_arm64 (`terraform providers lock -platform=...`). | A lock written on Windows only held windows_386 hashes, so CI on Linux failed `validate` under `-lockfile=readonly`. Re-run the same command after any provider bump. |
