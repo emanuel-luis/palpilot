@@ -10,7 +10,7 @@ with ranked as (
 
 select
     epoch_ms(t * 1000) as sampled_at,
-    cast(epoch_ms(t * 1000) as date) as sample_date,
+    cast(epoch_ms(t * 1000) as date) as sample_date_utc,
     cpu as cpu_pct,
     mem as mem_pct,
     disk as disk_pct,

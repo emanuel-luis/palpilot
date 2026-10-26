@@ -3,7 +3,9 @@ import json
 import os
 import subprocess
 import sys
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import duckdb
 import pytest
@@ -91,8 +93,16 @@ def test_ingest_is_idempotent(tmp_path):
     assert len(list((tmp_path / "_runs").glob("*.json"))) == 1
 
 
+TZ = ZoneInfo("America/Sao_Paulo")
+START, DAYS = "2026-09-01", 5
+END = (date.fromisoformat(START) + timedelta(days=DAYS)).isoformat()
+
+
 def expected_totals(landing: Path) -> dict:
-    """Mart totals computed straight from the landing files, without dbt or DuckDB."""
+    """Mart totals computed straight from the landing files, without dbt or DuckDB.
+
+    The window is fixed by START/DAYS in São Paulo local time, not derived from the data.
+    """
     by_t = {}
     for f in sorted((landing / "stats").rglob("history*")):
         for line in f.read_text().split("\n"):
@@ -102,7 +112,11 @@ def expected_totals(landing: Path) -> dict:
                 continue
             by_t.setdefault(s.t, s)
     ts = sorted(by_t)
+    local = lambda t: datetime.fromtimestamp(t, TZ).date()  # noqa: E731
+    first, last = date.fromisoformat(START), date.fromisoformat(END)
+    assert all(first <= local(t) < last for t in ts), "generator left the window"
     vm_s = play_s = player_s = 0
+    per_day = {}
     for i, t in enumerate(ts):
         nxt = ts[i + 1] - t if i + 1 < len(ts) else None
         w = nxt if nxt is not None and nxt <= 300 else 60
@@ -110,19 +124,20 @@ def expected_totals(landing: Path) -> dict:
         vm_s += w
         play_s += w if p >= 1 else 0
         player_s += p * w
-    days = (ts[-1] // 86400) - (ts[0] // 86400) + 1
+        per_day[local(t).isoformat()] = per_day.get(local(t).isoformat(), 0) + w / 3600
     var = vm_s / 3600 * 0.18
     return {
         "vm_hours": vm_s / 3600,
         "play_hours": play_s / 3600,
         "player_hours": player_s / 3600,
-        "total_cost_usd": var + days * 14 / 30,
-        "savings_usd": days * 24 * 0.18 - var,
+        "total_cost_usd": var + DAYS * 14 / 30,
+        "savings_usd": DAYS * 24 * 0.18 - var,
+        "per_day": per_day,
     }
 
 
 def test_end_to_end_marts_match_python(tmp_path):
-    generate(tmp_path / "landing", seed=11, days=5, rotate_lines=300)
+    generate(tmp_path / "landing", seed=11, days=DAYS, start=START, rotate_lines=300)
     ingest(tmp_path)
     env = {**os.environ, "ANALYTICS_DATA": tmp_path.as_posix()}
     cmd = [
@@ -130,6 +145,7 @@ def test_end_to_end_marts_match_python(tmp_path):
         "-c",
         "import sys; from dbt.cli.main import cli; cli()",
         "build",
+        "--no-partial-parse",
         "--project-dir",
         str(DBT_DIR),
         "--profiles-dir",
@@ -138,6 +154,8 @@ def test_end_to_end_marts_match_python(tmp_path):
         str(tmp_path / "dbt_target"),
         "--log-path",
         str(tmp_path / "dbt_logs"),
+        "--vars",
+        json.dumps({"period_start": START, "period_end": END}),
     ]
     done = subprocess.run(cmd, env=env, capture_output=True, text=True)
     assert done.returncode == 0, done.stdout[-3000:]
@@ -149,10 +167,16 @@ def test_end_to_end_marts_match_python(tmp_path):
         "select savings_usd from fct_idle_shutdown_savings where grain = 'period'"
     )
     got["savings_usd"] = savings.fetchone()[0]
+    days = dict(
+        con.execute("select cast(usage_date as varchar), vm_hours from fct_daily_usage").fetchall()
+    )
+    assert con.execute("select count(*) from int_calendar_days").fetchone()[0] == DAYS
     con.close()
     want = expected_totals(tmp_path / "landing")
     for k, v in want.items():
-        assert got[k] == pytest.approx(v, rel=1e-9), k
+        if k != "per_day":
+            assert got[k] == pytest.approx(v, rel=1e-9), k
+    assert days == pytest.approx(want["per_day"])
     assert got["cost_per_play_hour_usd"] == pytest.approx(
         want["total_cost_usd"] / want["play_hours"]
     )
@@ -160,3 +184,23 @@ def test_end_to_end_marts_match_python(tmp_path):
     text = report(tmp_path)
     assert "Cost per play-hour" in text
     assert (tmp_path / "marts" / "fct_daily_usage.parquet").exists()
+
+
+def test_report_prints_na_when_there_are_no_play_hours(tmp_path):
+    con = duckdb.connect(str(tmp_path / "palpilot.duckdb"))
+    con.execute(
+        "create table int_calendar_days as select date '2026-09-01' usage_date, 'X/Y' report_tz"
+    )
+    con.execute("create table fct_daily_usage as select date '2026-09-01' usage_date, 'day' grain")
+    con.execute(
+        "create table fct_cost_per_play_hour as select 'period' grain, 1.0 vm_hours, 0.0 play_hours, "
+        "0.0 player_hours, 0.18 variable_cost_usd, 0.47 fixed_cost_usd, 0.65 total_cost_usd, "
+        "null::double cost_per_play_hour_usd, null::double cost_per_player_hour_usd"
+    )
+    con.execute(
+        "create table fct_idle_shutdown_savings as select 'period' grain, 4.2 savings_usd, "
+        "0.9 savings_pct, 4.4 always_on_cost_usd, 1.0 idle_tail_hours, 0.18 idle_tail_cost_usd"
+    )
+    con.close()
+    text = report(tmp_path)
+    assert "Cost per play-hour      n/a" in text

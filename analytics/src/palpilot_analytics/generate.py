@@ -78,16 +78,29 @@ def _session(rng: random.Random, t0: int, morning: bool) -> list[dict]:
             return rows
 
 
+def _keep(session: list[dict], end: int) -> list[dict]:
+    return session if session[-1]["t"] < end else []
+
+
 def _samples(rng: random.Random, start: date, days: int) -> list[dict]:
     rows = []
+    # A session still running at the end of the window is never started: the reporting
+    # window then covers every sample (see the dbt test assert_samples_inside_period).
+    end = (
+        int(datetime.combine(start, time(), tzinfo=UTC).timestamp()) + days * 86400 + LOCAL_OFFSET_S
+    )
     for d in range(days):
         midnight = datetime.combine(start + timedelta(days=d), time(), tzinfo=UTC)
         base = int(midnight.timestamp()) + LOCAL_OFFSET_S
         weekend = (start + timedelta(days=d)).weekday() >= 5
         if rng.random() < 0.15:  # lunch-time solo session
-            rows += _session(rng, base + rng.randint(11 * 3600 + 1800, 13 * 3600 + 1800), True)
+            rows += _keep(
+                _session(rng, base + rng.randint(11 * 3600 + 1800, 13 * 3600 + 1800), True), end
+            )
         if rng.random() < (0.9 if weekend else 0.55):
-            rows += _session(rng, base + rng.randint(18 * 3600 + 1800, 21 * 3600 + 1800), False)
+            rows += _keep(
+                _session(rng, base + rng.randint(18 * 3600 + 1800, 21 * 3600 + 1800), False), end
+            )
     return rows
 
 
