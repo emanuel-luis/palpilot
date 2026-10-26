@@ -2,7 +2,12 @@ name: deploy
 
 # Auto-deploy on push to main. Mirrors the safe manual flow and NEVER touches
 # the VM (no terraform / no VM recreate): it only redeploys the always-on
-# coordinator (Cloud Function) and pushes panel code to the GCS bucket.
+# coordinator (Cloud Run) and pushes panel code to the GCS bucket.
+#
+# PAUSED: the GCP project is offline by choice (billing disabled). Both deploy
+# jobs run only when the repository variable DEPLOY_ENABLED is 'true'; otherwise
+# they are skipped (not failed) and only the CI checks run. To revive, follow
+# docs/REVIVAL.md, then set DEPLOY_ENABLED=true in the repo's Actions variables.
 #
 # - frontend/** or coordinator/**  -> build the single-file UI + redeploy the coordinator
 # - panel/**                       -> push panel code to the bucket (applied on next VM boot)
@@ -59,7 +64,7 @@ jobs:
   deploy-coordinator:
     timeout-minutes: 30
     needs: [changes, ci]
-    if: needs.changes.outputs.coordinator == 'true' || needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    if: vars.DEPLOY_ENABLED == 'true' && (needs.changes.outputs.coordinator == 'true' || needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -142,7 +147,7 @@ jobs:
   deploy-panel:
     timeout-minutes: 10
     needs: [changes, ci]
-    if: needs.changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
+    if: vars.DEPLOY_ENABLED == 'true' && (needs.changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

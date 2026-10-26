@@ -2,6 +2,10 @@
 
 **A cost-aware control plane for an on-demand Palworld dedicated server on Google Cloud.**
 
+> **Status: offline by choice.** Billing is disabled on the GCP project behind this repo, so there is
+> no running server and the deploy workflow is paused. The code, Terraform and CI are still maintained.
+> [`docs/REVIVAL.md`](docs/REVIVAL.md) explains how to bring the stack back.
+
 PalPilot runs your Palworld server on a GCE VM that **powers itself off when empty** and back on from a web
 console — so you pay for compute only while people are actually playing. On top of that it adds a full admin
 console: live status, in-game commands, a schema-aware settings editor, **save slots with per-save settings,
@@ -46,7 +50,7 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 ## Architecture
 
 ```
-  Browser ──HTTPS──▶  Coordinator  (Cloud Function, always-on)
+  Browser ──HTTPS──▶  Coordinator  (Cloud Run)
   Discord ──signed──▶  • slash commands (Ed25519-verified interactions endpoint)
                       • single-page console (built, self-contained)
                       • session-token auth, users/roles, watchdog config
@@ -83,14 +87,30 @@ Full diagrams and data model: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**
 5. Wait ~15 minutes for first provisioning; open the coordinator URL from `terraform output`.
 
 ### Ongoing changes
-- **Console / control-plane** code deploys by redeploying the coordinator (Cloud Function).
+- **Console / control-plane** code deploys by redeploying the coordinator (Cloud Run).
 - **VM-agent** code deploys by pushing to the panel bucket (applied on the VM's next boot).
 - **Automatically on push:** GitHub Actions handles both — see **[`docs/CICD.md`](docs/CICD.md)**.
 - **Infrastructure** changes (`*.tf`, `startup.sh`) are applied with `terraform apply` in a maintenance window,
   since editing `startup.sh` recreates the VM.
 
+> **Remote state:** an opt-in GCS backend ships as `backend.tf.example`; the migration steps are in
+> [`docs/REVIVAL.md`](docs/REVIVAL.md). Known risks and their fixes: [`docs/SECURITY.md`](docs/SECURITY.md).
+
 > **Security:** local Terraform state and `.tfvars` hold plaintext secrets. Keep the working tree **out of any
 > cloud-synced folder** (OneDrive/Dropbox) or use a remote state backend, and rotate credentials if exposed.
+
+---
+
+## Development
+
+```bash
+make install   # uv sync + npm ci
+make lint      # ruff, terraform fmt; tflint and checkov when installed
+make tf-check  # terraform init (no backend) + validate
+make test      # pytest (coordinator + agent); the route tests need the built console
+```
+
+Pull requests run the same checks in GitHub Actions; see [`docs/CICD.md`](docs/CICD.md).
 
 ---
 
