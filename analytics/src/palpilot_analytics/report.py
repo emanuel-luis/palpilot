@@ -23,24 +23,30 @@ def report(data: Path) -> str:
         cur = con.execute(sql)
         return dict(zip([d[0] for d in cur.description], cur.fetchone(), strict=True))
 
-    u = one(
-        "SELECT min(usage_date) AS first, max(usage_date) AS last, count(*) AS n FROM fct_daily_usage"
+    w = one(
+        "SELECT min(usage_date) AS first, max(usage_date) AS last, count(*) AS n, "
+        "any_value(report_tz) AS tz FROM int_calendar_days"
     )
     c = one("SELECT * FROM fct_cost_per_play_hour WHERE grain = 'period'")
     s = one("SELECT * FROM fct_idle_shutdown_savings WHERE grain = 'period'")
+
+    def n(v, spec: str = ".2f", prefix: str = "") -> str:  # null (no play hours) prints n/a
+        return "n/a" if v is None else f"{prefix}{v:{spec}}"
+
     return "\n".join(
         [
-            f"Usage and cost {u['first']} .. {u['last']} ({u['n']} days with usage; synthetic data)",
-            f"  VM hours                {c['vm_hours']:8.1f}",
-            f"  Play hours (>=1 player) {c['play_hours']:8.1f}",
-            f"  Player hours            {c['player_hours']:8.1f}",
-            f"  Total cost              ${c['total_cost_usd']:7.2f}  (VM ${c['variable_cost_usd']:.2f}"
-            f" + fixed ${c['fixed_cost_usd']:.2f})",
-            f"  Cost per play-hour      ${c['cost_per_play_hour_usd']:7.2f}",
-            f"  Cost per player-hour    ${c['cost_per_player_hour_usd']:7.2f}",
-            f"  Savings vs always-on    ${s['savings_usd']:7.2f}  ({s['savings_pct']:.1%} of "
-            f"${s['always_on_cost_usd']:.2f})",
-            f"  Idle-grace tails        {s['idle_tail_hours']:8.1f} h = ${s['idle_tail_cost_usd']:.2f}",
+            f"Usage and cost {w['first']} .. {w['last']} ({w['n']} days, {w['tz']}; synthetic data)",
+            f"  VM hours                {n(c['vm_hours'], '.1f')}",
+            f"  Play hours (>=1 player) {n(c['play_hours'], '.1f')}",
+            f"  Player hours            {n(c['player_hours'], '.1f')}",
+            f"  Total cost              {n(c['total_cost_usd'], prefix='$')}"
+            f"  (VM {n(c['variable_cost_usd'], prefix='$')} + fixed {n(c['fixed_cost_usd'], prefix='$')})",
+            f"  Cost per play-hour      {n(c['cost_per_play_hour_usd'], prefix='$')}",
+            f"  Cost per player-hour    {n(c['cost_per_player_hour_usd'], prefix='$')}",
+            f"  Savings vs always-on    {n(s['savings_usd'], prefix='$')}"
+            f"  ({n(s['savings_pct'], '.1%')} of {n(s['always_on_cost_usd'], prefix='$')})",
+            f"  Idle-grace tails        {n(s['idle_tail_hours'], '.1f')} h = "
+            f"{n(s['idle_tail_cost_usd'], prefix='$')}",
             f"Marts exported to {out}",
         ]
     )

@@ -36,7 +36,7 @@ models:
         data_tests: [{between: {arguments: {min_value: 0, max_value: 100000}}}]
 
   - name: fct_daily_usage
-    description: Per UTC day; a sample counts on the day it was taken.
+    description: Per local day in report_tz; a sample counts on the local day it was taken (a session crossing local midnight splits).
     columns:
       - name: usage_date
         data_tests: [unique, not_null]

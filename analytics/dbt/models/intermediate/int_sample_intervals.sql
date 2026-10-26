@@ -33,7 +33,7 @@ weighted as (
 select
     session_id,
     sampled_at,
-    sample_date,
+    cast(timezone('{{ var("report_tz") }}', timezone('UTC', sampled_at)) as date) as sample_date,
     players,
     interval_seconds,
     has_players,
