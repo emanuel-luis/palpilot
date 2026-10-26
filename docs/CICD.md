@@ -14,12 +14,26 @@ Keyless auth via **Workload Identity Federation** (no service-account JSON keys 
 
 ---
 
+## CI checks
+
+`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` that change at least one file outside the deploy paths, weekly, and by hand. Pushes that do touch `coordinator/`, `frontend/` or `panel/` get the same checks through `deploy.yml`, which calls `ci.yml` as its first job; both deploy jobs `needs` it, so a failed check blocks the deploy. A push that mixes deploy paths with other files runs the checks twice (once on its own, once through `deploy.yml`); that is harmless.
+
+| Job | What it checks |
+|---|---|
+| `lint-python` | `ruff check` and `ruff format --check` (format skips `coordinator/` and `panel/`) |
+| `terraform` | `fmt -check`, `init -backend=false` with the lock file read-only, `validate`, tflint, checkov against `.checkov.baseline` (only new findings fail) |
+| `actionlint` | workflow syntax |
+| `frontend` | `npm ci` and `npm run build` (includes `tsc -b`); uploads the build for the test job |
+| `test-python` | `uv run pytest` over `coordinator/tests` and `panel/tests`, using that build |
+
+`security.yml` audits the coordinator's Python dependencies (pip-audit) weekly and on changes to `coordinator/requirements.txt`. Run the same checks locally with `make lint`, `make test` and `make tf-check`.
+
 ## One-time setup
 
-Values for this project: `PROJECT=palworld-502616-e9`, `REGION=southamerica-east1`, repo `emanuel-luis/palpilot`.
+Replace the placeholders with your values: `<PROJECT_ID>` is the GCP project, `<PANEL_BUCKET>` is the panel bucket (`<PROJECT_ID>-palworld-panel`). Region `southamerica-east1`, repo `emanuel-luis/palpilot`.
 
 ```bash
-PROJECT=palworld-502616-e9
+PROJECT=<PROJECT_ID>
 PNUM=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
 REPO=emanuel-luis/palpilot
 DEPLOYER=palpilot-deployer@$PROJECT.iam.gserviceaccount.com
@@ -73,9 +87,9 @@ Secrets (`gh secret set NAME`) and variables (`gh variable set NAME`):
 ```bash
 gh secret   set GCP_WIF_PROVIDER --repo emanuel-luis/palpilot --body "projects/$PNUM/locations/global/workloadIdentityPools/github/providers/github"
 gh secret   set GCP_DEPLOY_SA    --repo emanuel-luis/palpilot --body "$DEPLOYER"
-gh variable set GCP_PROJECT      --repo emanuel-luis/palpilot --body "palworld-502616-e9"
+gh variable set GCP_PROJECT      --repo emanuel-luis/palpilot --body "<PROJECT_ID>"
 gh variable set GCP_REGION       --repo emanuel-luis/palpilot --body "southamerica-east1"
-gh variable set PANEL_BUCKET     --repo emanuel-luis/palpilot --body "palworld-502616-e9-palworld-panel"
+gh variable set PANEL_BUCKET     --repo emanuel-luis/palpilot --body "<PANEL_BUCKET>"
 ```
 
 ---

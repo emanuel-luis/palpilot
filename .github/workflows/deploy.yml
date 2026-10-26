@@ -30,15 +30,25 @@ env:
   PANEL_BUCKET: ${{ vars.PANEL_BUCKET }}
 
 jobs:
+  # Same checks as pull requests; both deploy jobs wait for them.
+  ci:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       coordinator: ${{ steps.f.outputs.coordinator }}
       frontend: ${{ steps.f.outputs.frontend }}
       panel: ${{ steps.f.outputs.panel }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      # Credentials stay persisted here on purpose: on push events paths-filter runs
+      # `git fetch origin <before-sha>`, which needs them in this private repo. The
+      # token is contents:read only.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: f
         with:
           filters: |
@@ -47,13 +57,16 @@ jobs:
             panel: ['panel/**']
 
   deploy-coordinator:
-    needs: changes
+    timeout-minutes: 30
+    needs: [changes, ci]
     if: needs.changes.outputs.coordinator == 'true' || needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: npm
@@ -77,12 +90,12 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
 
       # Cloud Run, not a Cloud Function: the container serves the multi-file
       # console (index.html + hashed assets/) AND the API from one origin, which
@@ -127,11 +140,14 @@ jobs:
           echo "console + assets served, API still gated"
 
   deploy-panel:
-    needs: changes
+    timeout-minutes: 10
+    needs: [changes, ci]
     if: needs.changes.outputs.panel == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # tests/ has no __init__.py, so `unittest discover` can't load it — list the
       # modules explicitly and add new ones here.
@@ -142,12 +158,12 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP (keyless / WIF)
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2.2.1
 
       # Panel code lives in the bucket and is fetched by the VM at boot. This
       # push does NOT restart a running server; it takes effect on the next VM
