@@ -1,0 +1,70 @@
+{
+    "failed_checks": [
+        {
+            "file": "/coordinator.tf",
+            "findings": [
+                {
+                    "resource": "google_artifact_registry_repository.coordinator",
+                    "check_ids": [
+                        "CKV_GCP_84"
+                    ]
+                },
+                {
+                    "resource": "google_cloud_run_service_iam_member.coordinator_invoker",
+                    "check_ids": [
+                        "CKV_GCP_102"
+                    ]
+                },
+                {
+                    "resource": "google_cloudfunctions2_function.coordinator",
+                    "check_ids": [
+                        "CKV_GCP_124"
+                    ]
+                },
+                {
+                    "resource": "google_project_iam_member.build_sa_builder",
+                    "check_ids": [
+                        "CKV_GCP_46",
+                        "CKV_GCP_49"
+                    ]
+                }
+            ]
+        },
+        {
+            "file": "/main.tf",
+            "findings": [
+                {
+                    "resource": "google_compute_disk.palworld_data",
+                    "check_ids": [
+                        "CKV_GCP_37"
+                    ]
+                },
+                {
+                    "resource": "google_compute_instance.palworld",
+                    "check_ids": [
+                        "CKV_GCP_30",
+                        "CKV_GCP_31",
+                        "CKV_GCP_32",
+                        "CKV_GCP_38",
+                        "CKV_GCP_40"
+                    ]
+                },
+                {
+                    "resource": "google_storage_bucket.palworld_backup",
+                    "check_ids": [
+                        "CKV_GCP_114",
+                        "CKV_GCP_62"
+                    ]
+                },
+                {
+                    "resource": "google_storage_bucket.palworld_panel",
+                    "check_ids": [
+                        "CKV_GCP_114",
+                        "CKV_GCP_62",
+                        "CKV_GCP_78"
+                    ]
+                }
+            ]
+        }
+    ]
+}
