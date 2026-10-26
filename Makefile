@@ -30,3 +30,15 @@ build: ## Build the console into coordinator/ (index.html, assets/; untracked bu
 
 lock: ## Regenerate coordinator/requirements.lock (hashed, linux x86_64, Python 3.12) from requirements.txt
 	uv pip compile coordinator/requirements.txt --python-version 3.12 --python-platform x86_64-manylinux_2_28 --generate-hashes -o coordinator/requirements.lock
+
+.PHONY: demo analytics-test
+ANALYTICS = PYTHONPATH=analytics/src uv run --locked --group analytics
+
+demo: ## Analytics demo: generate synthetic history, ingest, dbt build, report
+	$(ANALYTICS) python -m palpilot_analytics.generate
+	$(ANALYTICS) python -m palpilot_analytics.ingest
+	$(ANALYTICS) dbt build --project-dir analytics/dbt --profiles-dir analytics/dbt
+	$(ANALYTICS) python -m palpilot_analytics.report
+
+analytics-test: ## Analytics tests (includes an end-to-end dbt build)
+	$(ANALYTICS) pytest analytics/tests
