@@ -23,7 +23,8 @@ the coordinator's traffic inside the VPC:
 3. Set `panel_allowed_cidrs` to the subnet range only.
 4. Add a startup probe to the service: egress can take a while to become ready on a new instance.
 5. Remove the transitional gen2 Cloud Function (`google_cloudfunctions2_function.coordinator` and
-   its zip/archive resources in `coordinator.tf`): it also calls the panel at the external IP. Its
+   its zip/archive resources plus `google_cloud_run_service_iam_member.coordinator_invoker`, which
+   references it, in `coordinator.tf`): it also calls the panel at the external IP. Its
    comment explains when removal is safe (after the VM reboots onto the Cloud Run URL).
 
 Facts from the
