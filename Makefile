@@ -33,11 +33,17 @@ lock: ## Regenerate coordinator/requirements.lock (hashed, linux x86_64, Python 
 
 .PHONY: demo analytics-test
 ANALYTICS = PYTHONPATH=analytics/src uv run --locked --group analytics
+# One reporting window drives the generator and dbt: [PERIOD_START, PERIOD_END), local days.
+PERIOD_START ?= 2026-09-01
+DAYS ?= 30
+PERIOD_END = $(shell date -d "$(PERIOD_START) + $(DAYS) days" +%F)
+# Fresh parse and a target under the (gitignored) data dir: an OS switch cannot reuse a stale cache.
+DBT = $(ANALYTICS) dbt build --no-partial-parse --project-dir analytics/dbt --profiles-dir analytics/dbt --target-path $(CURDIR)/analytics/data/dbt/target --log-path $(CURDIR)/analytics/data/dbt/logs --vars "{period_start: '$(PERIOD_START)', period_end: '$(PERIOD_END)'}"
 
 demo: ## Analytics demo: generate synthetic history, ingest, dbt build, report
-	$(ANALYTICS) python -m palpilot_analytics.generate
+	$(ANALYTICS) python -m palpilot_analytics.generate --start $(PERIOD_START) --days $(DAYS)
 	$(ANALYTICS) python -m palpilot_analytics.ingest
-	$(ANALYTICS) dbt build --project-dir analytics/dbt --profiles-dir analytics/dbt
+	$(DBT)
 	$(ANALYTICS) python -m palpilot_analytics.report
 
 analytics-test: ## Analytics tests (includes an end-to-end dbt build)

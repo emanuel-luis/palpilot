@@ -9,6 +9,7 @@ on:
       - "analytics/**"
       - "pyproject.toml"
       - "uv.lock"
+      - "Makefile"
       - ".github/workflows/analytics.yml"
   push:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - "analytics/**"
       - "pyproject.toml"
       - "uv.lock"
+      - "Makefile"
       - ".github/workflows/analytics.yml"
   workflow_dispatch: {}
 

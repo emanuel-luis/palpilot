@@ -50,6 +50,13 @@ generation (the agent archives a file, then renames it), so duplicates reach raw
 
 ## The two questions
 
+The reporting window is explicit: dbt vars `period_start` and `period_end` (exclusive), plus `report_tz` (default
+America/Sao_Paulo). Days are local days in that zone, the calendar is built from the window (days without usage
+included), and the demo passes the same window to the generator and to dbt (`PERIOD_START`, `DAYS` in the Makefile).
+A session that crosses local midnight splits between the two days. A sample outside the window fails the dbt test
+`assert_samples_inside_period` rather than silently dropping out of the marts; the generator never starts a session
+that would still be running at the end of the window.
+
 Each sample stands for the time up to the next sample (one sample period, 60 s, when the gap is more than 5 minutes).
 
 - VM hours: the sum of those intervals. Samples exist only while the VM runs, including the boot minutes (`up=false`).
@@ -75,17 +82,22 @@ make analytics-test  # contract, determinism, idempotency, end-to-end marts
 ```
 
 Pieces: `python -m palpilot_analytics.generate --seed 42 --days 30 --start 2026-09-01`, then `ingest`, then
-`dbt build --project-dir analytics/dbt --profiles-dir analytics/dbt`, then `report` (with `PYTHONPATH=analytics/src`).
+`dbt build --project-dir analytics/dbt --profiles-dir analytics/dbt --vars "{period_start: '2026-09-01', period_end: '2026-10-01'}"`,
+then `report` (with `PYTHONPATH=analytics/src`). The Makefile uses `--no-partial-parse` and a target path under
+`analytics/data/`, so a dbt cache from another OS (WSL vs Windows) cannot break a run.
 `ANALYTICS_DATA` moves the data directory. The generator rotates by line count (the agent rotates at 8 MB, which a
 30-day demo would never reach).
 
-Example output of the default demo:
+Full output of the default demo (seed 42, 30 days):
 
 ```
-Usage and cost 2026-09-01 .. 2026-10-01 (26 days with usage; synthetic data)
-  VM hours                    62.3
-  Play hours (>=1 player)     48.6
-  Total cost              $  25.68  (VM $11.21 + fixed $14.47)
-  Cost per play-hour      $   0.53
-  Savings vs always-on    $ 122.71  (91.6% of $133.92)
+Usage and cost 2026-09-01 .. 2026-09-30 (30 days, America/Sao_Paulo; synthetic data)
+  VM hours                62.3
+  Play hours (>=1 player) 48.6
+  Player hours            80.8
+  Total cost              $25.21  (VM $11.21 + fixed $14.00)
+  Cost per play-hour      $0.52
+  Cost per player-hour    $0.31
+  Savings vs always-on    $118.39  (91.3% of $129.60)
+  Idle-grace tails        11.5 h = $2.07
 ```
