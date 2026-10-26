@@ -105,8 +105,9 @@ Full diagrams and data model: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**
 
 ```bash
 make install   # uv sync + npm ci
-make lint      # ruff, terraform fmt/validate, tflint and checkov when installed
-make test      # pytest (coordinator + agent)
+make lint      # ruff, terraform fmt; tflint and checkov when installed
+make tf-check  # terraform init (no backend) + validate
+make test      # pytest (coordinator + agent); the route tests need the built console
 ```
 
 Pull requests run the same checks in GitHub Actions; see [`docs/CICD.md`](docs/CICD.md).

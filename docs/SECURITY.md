@@ -22,6 +22,9 @@ the coordinator's traffic inside the VPC:
    external address.
 3. Set `panel_allowed_cidrs` to the subnet range only.
 4. Add a startup probe to the service: egress can take a while to become ready on a new instance.
+5. Remove the transitional gen2 Cloud Function (`google_cloudfunctions2_function.coordinator` and
+   its zip/archive resources in `coordinator.tf`): it also calls the panel at the external IP. Its
+   comment explains when removal is safe (after the VM reboots onto the Cloud Run URL).
 
 Facts from the
 [Direct VPC egress docs](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc): there is
@@ -31,10 +34,13 @@ IP addresses. None of these steps recreates the VM, but read the plan before app
 
 ## Secrets in instance metadata and in the state
 
-`enable_secret_manager` defaults to `false`, so the panel password, the admin password and the
-internal token travel in instance metadata and sit in plain text in the Terraform state. Keep the
-state in the versioned, private GCS bucket from the revival runbook, then set
-`enable_secret_manager = true` (VM recreate) and rotate the three values.
+The panel password, the admin password and the internal token are set as plaintext instance
+metadata (`main.tf`), sit in plain text in the Terraform state, and reach Cloud Run as plaintext
+env vars (`coordinator.tf`). `enable_secret_manager = true` only changes where `startup.sh` reads
+them from: the metadata values stay "for backward compatibility / rollback" (`main.tf`), and
+`secret_data` adds them to the state again. Taking them out of metadata and env needs a `.tf`
+change (drop the metadata keys, use Secret Manager references in Cloud Run). Until then, keep the
+state in the versioned, private GCS bucket from the revival runbook and rotate the three values.
 
 ## Static analysis
 
