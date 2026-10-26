@@ -1,0 +1,4 @@
+item,usd,unit,source
+vm_hour_usd,0.18,per VM-running hour (compute + egress),README estimate (Sao Paulo) - approximate
+fixed_monthly_usd,14,per month (static IP + disks),README estimate (Sao Paulo) - approximate
+proration_days_per_month,30,days (convention to prorate the monthly floor; not a price),analytics convention
