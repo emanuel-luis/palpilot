@@ -59,7 +59,7 @@ cp backend.hcl.example backend.hcl      # fill in the bucket name; backend.hcl i
 terraform init -migrate-state -backend-config=backend.hcl
 
 # 4.5 Serial and lineage must match before and after; then move the local copies out of the tree
-python -c "import json; s=json.load(open('terraform.tfstate')); print(s['serial'], s['lineage'])"
+python -c "import json; s=json.load(open('terraform.tfstate.pre-migration.bak')); print(s['serial'], s['lineage'])"
 terraform state pull | python -c "import json,sys; s=json.load(sys.stdin); print(s['serial'], s['lineage'])"
 ```
 
