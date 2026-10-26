@@ -5,8 +5,11 @@ import { session } from "@/stores/session";
 
 export function DevSwitcher() {
   if (!isMockEnabled()) return null;
+  // Mock mode is fixed for the page lifetime, so hook order never changes.
+  /* eslint-disable react-hooks/rules-of-hooks */
   const [, tick] = useState(0);
   const qc = useQueryClient();
+  /* eslint-enable react-hooks/rules-of-hooks */
   const refresh = () => { qc.invalidateQueries(); tick((v) => v + 1); };
   return (
     <div className="dev-switcher" role="region" aria-label="Dev mock switcher">
