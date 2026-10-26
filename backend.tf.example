@@ -1,0 +1,10 @@
+# Opt-in remote state in GCS. Not loaded by Terraform until you copy it to backend.tf:
+#
+#   cp backend.tf.example backend.tf
+#   cp backend.hcl.example backend.hcl   # fill in the bucket; backend.hcl is gitignored
+#   terraform init -migrate-state -backend-config=backend.hcl
+#
+# Full steps, including the state backup and the bucket creation: docs/REVIVAL.md.
+terraform {
+  backend "gcs" {}
+}
