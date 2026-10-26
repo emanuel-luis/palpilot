@@ -53,3 +53,7 @@ backend.hcl
 .venv/
 .ruff_cache/
 .pytest_cache/
+
+# Built console (npm run build in frontend/); produced by CI/deploy, never committed
+/coordinator/index.html
+/coordinator/assets/
