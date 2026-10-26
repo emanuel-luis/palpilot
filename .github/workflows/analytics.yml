@@ -1,0 +1,40 @@
+name: analytics
+
+# Usage and cost analytics (analytics/): lint, tests, and the one-command demo on synthetic data.
+# Separate from ci.yml so the main CI never installs dbt.
+
+on:
+  pull_request:
+    paths:
+      - "analytics/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/analytics.yml"
+  push:
+    branches: [main]
+    paths:
+      - "analytics/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/analytics.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group analytics
+      - run: uv run ruff check analytics/
+      - run: uv run ruff format --check analytics/
+      - run: PYTHONPATH=analytics/src uv run --locked --group analytics pytest analytics/tests
+      - run: make demo
