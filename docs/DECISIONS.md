@@ -15,3 +15,4 @@ Newest last.
 | 8 | 2026-10-26 | checkov findings | 16 existing findings recorded in the committed .checkov.baseline (generated on Linux so paths match CI); CI passes the baseline and fails only on new findings. | Fixing them needs semantic .tf changes, handled separately. Regenerate the baseline on Linux or WSL, not Windows. |
 | 9 | 2026-10-26 | Node version in CI | Node 20 in ci.yml, same as deploy.yml. | Parity with deploy. Node 20 is EOL: bump both together later. |
 | 10 | 2026-10-26 | tflint rules disabled | terraform_typed_variables is off (project_id, region, zone lack a type). | Adding type is a .tf edit, out of scope for the CI foundation. Follow-up. |
+| 11 | 2026-10-26 | npm audit in security.yml | Deferred to the frontend tooling PR. | It reports a high zod advisory (GHSA-mrhx-c7xc-m3w5) today; the fix changes frontend/, a deploy path, so it ships with that PR instead of leaving a red check here. |

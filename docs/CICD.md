@@ -26,7 +26,7 @@ Keyless auth via **Workload Identity Federation** (no service-account JSON keys 
 | `frontend` | `npm ci` and `npm run build` (includes `tsc -b`); uploads the build for the test job |
 | `test-python` | `uv run pytest` over `coordinator/tests` and `panel/tests`, using that build |
 
-`security.yml` audits dependencies weekly and on dependency-file changes. Run the same checks locally with `make lint`, `make test` and `make tf-check`.
+`security.yml` audits the coordinator's Python dependencies (pip-audit) weekly and on changes to `coordinator/requirements.txt`. Run the same checks locally with `make lint`, `make test` and `make tf-check`.
 
 ## One-time setup
 
