@@ -1,0 +1,44 @@
+# The revival runbook: bringing the offline project back, in the order docs/REVIVAL.md gives.
+# Grounded in docs/REVIVAL.md, docs/SECURITY.md, backend.tf.example, backend.hcl.example and
+# .github/workflows/deploy.yml. Every step is run by the owner, one command at a time.
+...@_style
+
+revival: "Revival runbook: from billing off to a deployed stack" {
+  shape: sequence_diagram
+  style: {font-size: 24; bold: true}
+
+  owner: "Owner" {class: actor}
+  gcp: "GCP project\n(billing, gcloud)" {class: external}
+  state: "State bucket\n<project>-tfstate" {class: store}
+  tf: "Terraform" {class: process}
+  repo: "GitHub repo\nsettings" {class: external}
+  deploy: "deploy.yml" {class: process}
+
+  owner -> owner: "1. pick the project: the same one\n(keeps WIF and repo variables)\nor a new one (empty remote state)"
+  owner -> gcp: "2. link a billing account"
+  owner -> gcp: "3. read-only inventory: instances,\ndisks, addresses, buckets, Run"
+
+  migrate: "4. Move the state to GCS before any apply" {
+    owner -> owner: "back up terraform.tfstate,\nnote its sha256"
+    owner -> state: "create: private,\nversioning on"
+    owner -> tf: "backend.tf from the example;\ninit -migrate-state"
+    tf -> state: "copy the local state"
+    owner -> tf: "serial and lineage match;\nmove local copies out"
+  }
+
+  apply: "5. Plan, read, apply" {
+    owner -> tf: "plan -out=revival.tfplan"
+    tf -> owner: "read every\nmust be replaced" {class: meta}
+    owner -> tf: "apply revival.tfplan"
+    tf -> gcp: "recreate what was deleted\nwhile billing was off"
+    owner -> gcp: "after a VM replace:\nget-iam-policy (empty etag:\napply again)"
+  }
+
+  enable: "6. Re-enable deploys" {
+    owner -> repo: "check the WIF secrets and\nvariables; set\nDEPLOY_ENABLED=true"
+    owner -> deploy: "Run workflow\n(workflow_dispatch)"
+    deploy -> gcp: "deploy the coordinator and\nthe agent; smoke test"
+  }
+
+  owner -> gcp: "7. harden: Direct VPC egress\nand close 8080; rotate passwords\nand token; drop default-allow-ssh"
+}

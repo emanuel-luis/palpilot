@@ -65,26 +65,18 @@ You get a hosted server's convenience without the always-on bill (see [Cost](#co
 
 ## Architecture
 
-```
-  Browser ──HTTPS──▶  Coordinator  (Cloud Run)
-  Discord ──signed──▶  • slash commands (Ed25519-verified interactions endpoint)
-                      • single-page console (built, self-contained)
-                      • session-token auth, users/roles, watchdog config
-                      • start/stop the VM
-                      • signed, permission-checked proxy to the VM agent
-                          │
-                          ▼  (RBAC-signed requests over the VM's IP)
-                      Palworld VM (GCE, start/stop billing)
-                      • agent: settings / saves / mods / backups / restore
-                      • idle watchdog: auto power-off when empty
-                      • palworld.service  +  persistent data disk
-```
+![Architecture: players reach the game through the static IP and the UDP 8211 firewall rule, or start the server from Discord; admins use the console on the Cloud Run coordinator, which powers the VM through the Compute Engine API, keeps users, roles and the watchdog config in the panel bucket, and proxies signed requests to the agent on port 8080, a rule open to 0.0.0.0/0 by default; on the VM, startup.sh fetches the agent code and secrets, the watchdog asks the coordinator to stop an empty VM, and the agent and a cron job write backups and the stats history to the backups bucket](docs/diagrams/architecture.svg)
+
+Source: [architecture.d2](docs/diagrams/architecture.d2).
 
 Two tiers on purpose: the always-on control plane is tiny and serverless; the expensive VM only runs while
 players are on. The VM-side agent is delivered from a GCS bucket, so most updates ship **without a Terraform
 apply or VM recreate**.
 
-Full diagrams and data model: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
+More diagrams in **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**: the sign-in and signed proxy, save slots,
+game version reconcile, starting the server, the idle shutdown and the deployment paths. The usage and cost data
+flow is in [`analytics/README.md`](analytics/README.md) and the revival runbook in
+[`docs/REVIVAL.md`](docs/REVIVAL.md).
 
 ---
 
@@ -128,6 +120,19 @@ make demo      # usage/cost analytics end to end on synthetic data (Linux or WSL
 ```
 
 Pull requests run the same checks in GitHub Actions; see [`docs/CICD.md`](docs/CICD.md).
+
+Diagrams are D2 sources in [`docs/diagrams/`](docs/diagrams/) (shared style in `_style.d2`), rendered to the
+SVGs committed next to them. D2 is pinned to v0.9.0 and checksum-verified; run these on Linux or WSL:
+
+```bash
+make d2-install                          # install the pinned D2 under ~/.local/share/d2
+make diagrams                            # render every docs/diagrams/*.d2 to SVG
+make diagrams-check                      # render, then fail on a stale, missing or orphaned SVG (CI)
+make diagrams-watch NAME=architecture    # live preview of one diagram in the browser
+```
+
+Edit the `.d2` file, run `make diagrams` and commit both files. The `diagrams` workflow runs `make
+diagrams-check` when `docs/diagrams/`, the Makefile or `.gitattributes` change.
 
 ---
 

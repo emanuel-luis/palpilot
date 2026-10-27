@@ -1,0 +1,44 @@
+# Where a save slot lives on the persistent data disk, and how its settings move when it is
+# activated. Grounded in panel/panel.py (SAVEGAMES_DIR, GUS_PATH, INI_PATH, SLOT_CONFIG_DIR,
+# SLOTS_META, get_active_world, set_active_world, save_active_config_to_slot, apply_slot_config,
+# backup_world, _slot_backups_dir).
+...@_style
+
+title: "Save slots: one world, one settings file each" {
+  shape: text
+  near: top-center
+  style: {font-size: 24; bold: true}
+}
+
+direction: down
+
+disk: "Data disk · /home/steam/Steam/Pal/Saved" {
+  class: group
+  gus: "Config/LinuxServer/\nGameUserSettings.ini\nDedicatedServerName = active guid" {class: source}
+  meta: "palworld-slots.json\nname, created, last backup,\nversion pin per slot" {class: source}
+  worlds: "SaveGames/0/<guid>/\none folder per world" {class: store}
+  slot_cfg: "palworld-slot-configs/\n<guid>.ini per slot" {class: source}
+  live: "Config/LinuxServer/\nPalWorldSettings.ini\nlive settings" {class: source}
+  local_bk: "SaveGames/0/_slot_backups/\nworld-<guid>-*.tar.gz" {class: store}
+}
+
+game: "palworld.service\nloads the active world\nwith the live settings" {class: process}
+bucket: "GCS backups bucket\nslots/world-<guid>-*.tar.gz" {class: store}
+
+disk.gus -> disk.worlds: "names the active one" {class: meta}
+disk.meta -> disk.worlds {class: meta}
+disk.slot_cfg -> disk.live: "applied on activate"
+disk.live -> disk.slot_cfg: "snapshot on edit\nand on switch"
+disk.worlds -> disk.local_bk: "backup (also before\na switch or update)"
+disk.local_bk -> bucket: copy
+disk.worlds -> game
+disk.live -> game
+
+legend: Legend {
+  class: legend
+  grid-columns: 4
+  source: config file {class: [source; legend-item]}
+  store: world data {class: [store; legend-store]}
+  process: process {class: [process; legend-item]}
+  edges: "solid arrow: data\ndashed: a pointer\nor metadata" {shape: text; style.font-size: 13}
+}

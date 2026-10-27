@@ -138,3 +138,12 @@ the `container` job in `ci.yml` builds and smoke-tests the same Dockerfile on ev
 pushes to main that touch `analytics/**`, `pyproject.toml`, `uv.lock`, `Makefile` or the workflow itself (plus manual dispatch):
 ruff check and format check on `analytics/`, the analytics tests, then `make demo` (synthetic data, no GCP access, no
 secrets). Locally: `make demo` and `make analytics-test` (the demo computes the window end with GNU `date`, so run it on Linux or WSL). Details in `analytics/README.md`.
+
+## Diagrams
+
+`.github/workflows/diagrams.yml` checks that the SVGs in `docs/diagrams/` match their D2 sources. It installs the
+pinned D2 (v0.9.0, sha256 in the Makefile) with `make d2-install`, runs `make diagrams-check` and uploads the rendered
+SVGs as the `diagrams` artifact (kept 7 days, also on failure). It runs on pull requests and pushes to `main` that touch
+`docs/diagrams/**`, the `Makefile`, `.gitattributes` or the workflow itself, plus manual dispatch: the repo is private
+and pays for Actions minutes, so the job stays off unrelated changes. `main` has no required status checks, so the path
+filter cannot block a pull request. None of these paths is a deploy path, so a diagram change never starts `deploy.yml`.

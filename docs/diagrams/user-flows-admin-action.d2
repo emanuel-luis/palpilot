@@ -1,0 +1,41 @@
+# An admin signs in and switches the active world from the console: the login, the permission
+# checks on both tiers and the signed proxy. Grounded in coordinator/main.py (_h_login,
+# _check_password, _make_token, _authenticate_bearer, ROUTES, _proxy, _rbac_headers, _audit) and
+# panel/panel.py (_verify_coord_headers, require, saves_activate, activate_slot, backup_world).
+...@_style
+
+admin: "Admin action: switch the active world from the console" {
+  shape: sequence_diagram
+  style: {font-size: 24; bold: true}
+
+  admin: "Admin\n(console)" {class: actor}
+  run: "Coordinator\n(Cloud Run)" {class: serving}
+  bucket: "Panel bucket\nusers, roles" {class: store}
+  compute: "Compute\nEngine API" {class: process}
+  agent: "Agent\n(palworld-panel)" {class: process}
+  backups: "Backups\nbucket" {class: store}
+
+  login: "Sign in once" {
+    admin -> run: "POST /api/login\nusername, password"
+    run -> bucket: "users.json, roles.json"
+    run -> run: "PBKDF2 check;\n5 failures per IP\nin 60 s; resolve\nrole or custom perms"
+    run -> admin: "session token: HMAC-signed\n{u, perms, exp 12 h, ver}" {class: meta}
+  }
+
+  admin -> run: "POST /api/saves/<guid>/\nactivate, Bearer token"
+  run -> run: "verify signature,\nexpiry, ver; re-read\nlive perms; the\nroute needs saves"
+  denied: "Without saves" {
+    run -> admin: "403, audited" {class: meta}
+  }
+  run -> compute: "instances.get"
+  compute -> run: "RUNNING (else 503\nvm_offline)" {class: meta}
+  run -> agent: "proxy to http://<static IP>:8080\nX-Coord-User, Perms, Ts, Sig\n(HMAC, INTERNAL_TOKEN)"
+  agent -> agent: "verify the signature, 120 s\nskew; require(saves)"
+  agent -> agent: "stop the game"
+  agent -> backups: "pre-switch backup: data disk\nand slots/world-<guid>-*.tar.gz"
+  agent -> agent: "snapshot the outgoing settings,\npoint at the new world, apply\nits ini, re-assert REST keys"
+  agent -> agent: "reconcile the build this\nsave wants, start the game"
+  agent -> run: "{ok, previous, active,\nbackup, version}" {class: meta}
+  run -> run: "audit log: change"
+  run -> admin: result {class: meta}
+}

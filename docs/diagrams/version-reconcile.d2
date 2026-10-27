@@ -1,0 +1,49 @@
+# How the agent decides whether to install a game build. Grounded in panel/panel.py
+# (reconcile_version, resolve_target, update_cooldown, _players_online, apply_update,
+# _install_latest, _install_pinned, _UPDATE_STRATEGIES, UPDATE_CHECK_SECONDS) and startup.sh
+# (panel.py game-sync boot).
+...@_style
+
+title: "Game version: reconcile what the active save wants" {
+  shape: text
+  near: top-center
+  style: {font-size: 24; bold: true}
+}
+
+direction: down
+
+triggers: "Triggers: boot (game-sync),\nagent start-up, save activate\nor restore, every 3 h" {class: source}
+manual: "Console: POST /api/update/apply\nexplicit target, skips these\nchecks; refused while players\nare online unless forced" {class: source}
+target: "resolve_target()\nthe active save wants latest\nor a pinned buildid" {class: process}
+steam_info: "Steam\npublic buildid,\ndepot manifests" {class: external}
+gate: "latest with auto-update\noff, Steam cooldown (not\nforced), or target unknown?" {class: process; shape: diamond}
+same: "installed buildid\n= wanted?" {class: process; shape: diamond}
+pinned: "pinned build with no\nrecorded manifests?" {class: process; shape: diamond}
+players: "players online\nand not forced?" {class: process; shape: diamond}
+skip: "skip, report why" {class: process}
+noop: "up to date" {class: process}
+defer: "skip as pending; the next\ntrigger tries again" {class: process}
+apply: "apply_update\nstop the game, pre-update backup,\ninstall: app_update with escalating\nretries (latest) or download_depot\n(pinned); verify the buildid; start" {class: process}
+
+triggers -> target
+steam_info -> target: "latest buildid" {class: meta}
+target -> gate
+gate -> skip: "yes"
+gate -> same: "no"
+same -> noop: "yes"
+same -> pinned: "no"
+pinned -> skip: "yes"
+pinned -> players: "no"
+players -> defer: "yes"
+players -> apply: "no"
+manual -> apply
+apply -> steam_info: steamcmd
+
+legend: Legend {
+  class: legend
+  grid-columns: 4
+  source: trigger {class: [source; legend-item]}
+  process: "step or outcome" {class: [process; legend-item]}
+  decision: decision {class: [process; legend-item]; shape: diamond}
+  external: external system {class: [external; legend-item]}
+}

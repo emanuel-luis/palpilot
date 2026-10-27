@@ -15,19 +15,10 @@ synthetic input and say nothing about real usage.
 
 ## Layers
 
-```mermaid
-flowchart LR
-    A["Agent JSONL<br/>(bucket layout)"] --> L["landing<br/>archive/*.jsonl, history.jsonl.1, history.jsonl"]
-    L --> I["ingest.py<br/>pydantic contract"]
-    I --> R["raw Parquet<br/>dt=YYYY-MM-DD + lineage"]
-    I --> X["rejects/<br/>line + reason"]
-    I --> M["_runs/&lt;run_id&gt;.json<br/>run metadata"]
-    R --> S["stg_history_samples<br/>dedupe, types, UTC"]
-    S --> N["int_sample_intervals<br/>int_vm_sessions"]
-    N --> F["marts<br/>fct_daily_usage<br/>fct_cost_per_play_hour<br/>fct_idle_shutdown_savings"]
-    U["seed unit_costs"] --> F
-    F --> P["report.py<br/>summary + marts/*.parquet"]
-```
+![Data flow: on the VM the agent samples host and game metrics every 60 seconds into history.jsonl on the data disk, mirrored to stats/ in the backups bucket every 15 minutes and archived at each 8 MB rotation; offline, generate.py writes the same layout; ingest.py checks every landing line against the pydantic contract and writes raw Parquet partitioned by date, rejects with their reason and a run file; dbt-duckdb builds staging (with its tests), sample intervals and sessions, the calendar of the reporting window and the unit-cost seed into three marts checked by singular tests; report.py prints the summary and exports the marts](../docs/diagrams/data-flow.svg)
+
+Source: [data-flow.d2](../docs/diagrams/data-flow.d2). The marts read `int_sample_intervals` directly;
+`int_vm_sessions` feeds the session tests.
 
 | Layer | Where | What |
 |---|---|---|
