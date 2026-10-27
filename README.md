@@ -149,12 +149,12 @@ With the default demo (30 days, seed 42) and the cost estimates below:
 
 ## Cost
 
-Because the server is off by default, cost is a small fixed floor plus a per-play-hour rate (São Paulo, approx):
+Because the server is off by default, cost is a small fixed floor plus a rate per hour the VM runs (São Paulo, approx):
 
 | | Estimate |
 |---|---|
 | Fixed floor (VM off): static IP + disks | **~$14/month** |
-| Per play-hour: compute + egress | **~$0.18/hour** |
+| Per running hour (VM on): compute + egress | **~$0.18/hour** |
 | Example — 2 h/day · 4 h/day · 8 h/day | **~$27 · ~$40 · ~$65 / month** |
 
 The console, backups, roles, per-save settings, mods, watchdog, and monitoring cost effectively nothing —
