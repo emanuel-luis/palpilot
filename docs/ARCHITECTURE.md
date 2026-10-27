@@ -15,7 +15,7 @@ flowchart TB
     end
 
     subgraph GCP_Serverless["Always-on (serverless)"]
-      CF["Coordinator<br/>Cloud Function (HTTP)"]
+      CF["Coordinator<br/>Cloud Run (HTTP)"]
       GCS[("GCS buckets<br/>users.json · roles.json · watchdog.json<br/>panel code · backups")]
     end
 
@@ -222,9 +222,9 @@ flowchart LR
       TF["*.tf / startup.sh"]
     end
 
-    FE -->|build| IDX["coordinator/index.html<br/>(self-contained)"]
+    FE -->|build in CI| IDX["coordinator/index.html + assets/<br/>(build output, not in git)"]
     IDX --> DEP1
-    CO --> DEP1["Deploy coordinator<br/>(Cloud Function)"]
+    CO --> DEP1["Deploy coordinator<br/>(Cloud Run)"]
     PA -->|push| BKT[("panel bucket")]
     BKT -->|fetched on boot / self-update| VMB["VM agent"]
     TF -->|terraform apply<br/>maintenance window| INFRA["Infra / VM"]
@@ -234,7 +234,8 @@ flowchart LR
     INFRA -.->|startup.sh ⇒ VM recreate| LIVE3["VM"]
 ```
 
-- **Coordinator + console** → redeploy the Cloud Function (zero downtime). GitHub Actions does this on push.
+- **Coordinator + console** → redeploy the Cloud Run service (zero downtime). GitHub Actions does this on push
+  once `DEPLOY_ENABLED` is set; it is paused while the project is offline ([`CICD.md`](CICD.md)).
 - **Agent** → push to the panel bucket; the VM fetches it on next boot (or self-update). No live restart from CI.
 - **Infra** → `terraform apply`. Editing `startup.sh` forces a VM recreate, so it's a planned, maintenance-window
   action; the persistent data disk is preserved across the recreate.
