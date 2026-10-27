@@ -131,3 +131,10 @@ the `container` job in `ci.yml` builds and smoke-tests the same Dockerfile on ev
   the ignore files. After `make build`, list what would be uploaded with
   `gcloud meta list-files-for-upload coordinator` (read-only, local); it must show `index.html`, `assets/*`,
   `main.py`, `discord_bot.py`, `Dockerfile` and `requirements.*`.
+
+## Analytics
+
+`.github/workflows/analytics.yml` is separate from `ci.yml` so the main CI never installs dbt. It runs on pull requests and
+pushes to main that touch `analytics/**`, `pyproject.toml`, `uv.lock`, `Makefile` or the workflow itself (plus manual dispatch):
+ruff check and format check on `analytics/`, the analytics tests, then `make demo` (synthetic data, no GCP access, no
+secrets). Locally: `make demo` and `make analytics-test` (the demo computes the window end with GNU `date`, so run it on Linux or WSL). Details in `analytics/README.md`.

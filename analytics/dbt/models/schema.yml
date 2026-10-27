@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: stg_history_samples
+    description: Deduplicated, typed samples with UTC timestamps (one row per sample instant).
+    columns:
+      - name: sampled_at
+        data_tests: [unique, not_null]
+      - name: cpu_pct
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 100}}}]
+      - name: mem_pct
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 100}}}]
+      - name: disk_pct
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 100}}}]
+      - name: players
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 1000}}}]
+      - name: game_up
+        data_tests: [not_null]
+
+  - name: int_sample_intervals
+    description: Samples labelled with session, the time each one covers, play and idle-tail flags.
+    columns:
+      - name: sampled_at
+        data_tests: [unique, not_null]
+      - name: interval_seconds
+        data_tests: [not_null, {between: {arguments: {min_value: 1, max_value: 300}}}]
+
+  - name: int_vm_sessions
+    description: One row per VM run (gaps-and-islands over the samples).
+    columns:
+      - name: session_id
+        data_tests: [unique, not_null]
+      - name: vm_minutes
+        data_tests: [{between: {arguments: {min_value: 1, max_value: 100000}}}]
+      - name: idle_tail_minutes
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 100000}}}]
+
+  - name: fct_daily_usage
+    description: Per local day in report_tz; a sample counts on the local day it was taken (a session crossing local midnight splits).
+    columns:
+      - name: usage_date
+        data_tests: [unique, not_null]
+      - name: vm_hours
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 24}}}]
+      - name: play_hours
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 24}}}]
+
+  - name: fct_cost_per_play_hour
+    description: Day rows plus one period row. Cost = vm_hours x hourly rate + prorated fixed floor.
+    columns:
+      - name: row_key
+        data_tests: [unique, not_null]
+      - name: grain
+        data_tests: [{accepted_values: {arguments: {values: [day, period]}}}]
+      - name: total_cost_usd
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 1000000}}}]
+
+  - name: fct_idle_shutdown_savings
+    description: Actual VM cost against an always-on VM, plus the cost of the idle grace tails.
+    columns:
+      - name: row_key
+        data_tests: [unique, not_null]
+      - name: savings_usd
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 1000000}}}]
+      - name: idle_tail_cost_usd
+        data_tests: [{between: {arguments: {min_value: 0, max_value: 1000000}}}]
+
+seeds:
+  - name: unit_costs
+    description: Unit prices. Only the README estimates; approximate.
+    columns:
+      - name: item
+        data_tests: [unique, not_null]
+      - name: usd
+        data_tests: [not_null]
+      - name: source
+        data_tests: [not_null]

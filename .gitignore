@@ -57,3 +57,9 @@ backend.hcl
 # Built console (npm run build in frontend/); produced by CI/deploy, never committed
 /coordinator/index.html
 /coordinator/assets/
+
+# Analytics: generated data and dbt artefacts (analytics/)
+analytics/data/
+analytics/dbt/target/
+analytics/dbt/logs/
+analytics/dbt/.user.yml

@@ -1,0 +1,14 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Parquet written by palpilot_analytics.ingest (valid rows only), hive-partitioned by UTC date.
+    meta:
+      external_location: "read_parquet('{{ env_var('ANALYTICS_DATA', 'analytics/data') }}/raw/history/*/*.parquet', hive_partitioning = true)"
+    tables:
+      - name: history
+        columns:
+          - name: t
+            data_tests: [not_null]
+          - name: source_file
+            data_tests: [not_null]
