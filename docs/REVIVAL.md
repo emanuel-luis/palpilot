@@ -9,6 +9,10 @@ deleted and might not be fully recoverable",
 [Cloud Billing docs](https://docs.cloud.google.com/billing/docs/how-to/modify-project)). Expect to
 recreate most of the infrastructure.
 
+![Sequence of the revival runbook: the owner picks the project, links a billing account and takes a read-only inventory; creates a private, versioned state bucket and migrates the local Terraform state into it, checking serial and lineage; plans, reads every replacement, applies, and checks the VM's IAM policy after a replace; sets DEPLOY_ENABLED and runs the deploy workflow by hand, which deploys and smoke-tests; then hardens: Direct VPC egress to close port 8080, rotated passwords and token, no default-allow-ssh](diagrams/user-flows-revival.svg)
+
+Source: [user-flows-revival.d2](diagrams/user-flows-revival.d2).
+
 ## 1. Pick the project
 
 - **Same project:** keeps the project ID, the Workload Identity Federation setup and the repo
