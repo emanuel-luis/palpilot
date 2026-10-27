@@ -1,0 +1,92 @@
+# Usage and cost data: the agent's stats history to the dbt-duckdb cost marts.
+# Grounded in panel/panel.py (stats_sample, stats_append, stats_sync), analytics/src/palpilot_analytics/
+# (generate, ingest, report), analytics/dbt/ (sources, models, seeds, tests) and the Makefile (make demo).
+...@_style
+
+title: "Data flow: stats history to cost per play-hour" {
+  shape: text
+  near: top-center
+  style: {font-size: 24; bold: true}
+}
+
+direction: down
+
+vm: "VM" {
+  class: group
+  sampler: "agent stats sampler, while\nthe VM runs, every 60 s: cpu,\nmem, disk, net, players,\nfps, uptime, up" {class: process}
+  local: "data disk: history.jsonl\nhistory.jsonl.1 after the\n8 MB rotation" {class: store}
+}
+
+bkt: "GCS" {
+  class: group
+  live: "backups bucket:\nstats/history.jsonl\nmirror every 15 min" {class: store}
+  archive: "backups bucket:\nstats/archive/\nhistory-<ts>.jsonl\nat each rotation" {class: store}
+}
+
+gen: "generate.py (offline today)\nsynthetic, seeded, same layout,\ninjected defects" {class: source}
+
+files: "analytics/data/" {
+  class: group
+  landing: "landing/stats/\narchive/*.jsonl, history.jsonl.1,\nhistory.jsonl" {class: source}
+  ingest: "ingest.py, full refresh\nrun_id = digest of the input" {class: process}
+  contract: "contract on ingest\npydantic Sample: strict types,\nranges, no extra keys" {class: check}
+  raw: "raw/history/dt=YYYY-MM-DD/\nParquet + source_file, line_no,\nrun_id, ingested_at" {class: store}
+  rejects: "rejects/rejects.jsonl\nline and reason" {class: store}
+  runs: "_runs/<run_id>.json\nrows read, valid, rejected" {class: store}
+}
+
+dbt: "dbt-duckdb" {
+  class: group
+  stg: "stg_history_samples\ndedupe by t, typed, UTC" {class: process}
+  stg_tests: "tests on staging\nunique, not_null, between" {class: check}
+  intervals: "int_sample_intervals\ntime to the next sample,\nsession_id, idle tail" {class: process}
+  sessions: "int_vm_sessions\na gap over 5 min\nstarts a session" {class: process}
+  calendar: "int_calendar_days\nperiod_start to period_end,\nlocal days" {class: process}
+  seed: "seed unit_costs\nUS\$0.18 per VM hour,\nUS\$14 per month floor" {class: source}
+  daily: "fct_daily_usage\nVM, play, player hours" {class: store}
+  cost: "fct_cost_per_play_hour\nday and period" {class: store}
+  savings: "fct_idle_shutdown_savings\nvs always on, idle tail" {class: store}
+  mart_tests: "singular tests\nsamples inside the period,\nno overlapping sessions,\ndaily hours reconcile" {class: check}
+}
+
+report: "report.py reads\npalpilot.duckdb: summary,\nmarts/*.parquet" {class: serving}
+
+vm.sampler -> vm.local: append
+vm.local -> bkt.live
+vm.local -> bkt.archive
+bkt.live -> files.landing: "copy when online"
+bkt.archive -> files.landing
+gen -> files.landing
+files.landing -> files.ingest
+files.landing -> files.contract {class: layer}
+files.ingest -> files.raw
+files.ingest -> files.rejects
+files.ingest -> files.runs {class: meta}
+files.raw -> dbt.stg: "source raw.history"
+files.raw -> dbt.stg_tests {class: layer}
+dbt.stg -> dbt.intervals
+dbt.intervals -> dbt.sessions
+dbt.intervals -> dbt.daily
+dbt.daily -> dbt.cost
+dbt.daily -> dbt.savings
+dbt.calendar -> dbt.cost
+dbt.calendar -> dbt.savings
+dbt.seed -> dbt.cost
+dbt.seed -> dbt.savings
+dbt.intervals -> dbt.mart_tests {class: meta}
+dbt.sessions -> dbt.mart_tests {class: meta}
+dbt.daily -> dbt.mart_tests {class: meta}
+dbt.daily -> report
+dbt.cost -> report
+dbt.savings -> report
+
+legend: Legend {
+  class: legend
+  grid-columns: 3
+  source: "source files\nor seed" {class: [source; legend-item]}
+  process: process or model {class: [process; legend-item]}
+  store: stored data or mart {class: [store; legend-store]}
+  check: contract or test {class: [check; legend-item]}
+  serving: serving {class: [serving; legend-item]}
+  edges: "solid arrow: data\ndashed: metadata or\nwhat a test reads" {shape: text; style.font-size: 13}
+}
