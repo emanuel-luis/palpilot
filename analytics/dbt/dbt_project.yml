@@ -1,0 +1,21 @@
+name: palpilot_analytics
+version: "0.1.0"
+config-version: 2
+profile: palpilot
+
+flags:
+  send_anonymous_usage_stats: false
+
+vars:
+  session_gap_seconds: 300 # a gap longer than this between samples starts a new VM session
+  sample_seconds: 60 # STATS_SAMPLE_SECONDS in panel/panel.py
+  report_tz: America/Sao_Paulo # days are local days in this zone; period_start/period_end (exclusive) are required, pass with --vars
+
+models:
+  palpilot_analytics:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table
