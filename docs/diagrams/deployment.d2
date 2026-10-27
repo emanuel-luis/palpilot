@@ -1,0 +1,69 @@
+# How each part of the repo ships. Grounded in .github/workflows/deploy.yml, ci.yml,
+# diagrams.yml, docs/CICD.md (WIF and deployer SA set up by hand), coordinator.tf (Artifact Registry,
+# Cloud Run with ignore_changes on the image) and main.tf (panel objects are create-once).
+...@_style
+
+title: "Deployment paths: what a push to main does" {
+  shape: text
+  near: top-center
+  style: {font-size: 24; bold: true}
+}
+
+direction: down
+
+src_app: "coordinator/, frontend/" {class: source}
+src_panel: "panel/" {class: source}
+src_infra: "*.tf, startup.sh" {class: source}
+src_docs: "everything else: docs/,\nanalytics/, README, .github/" {class: source}
+
+gha: "GitHub Actions" {
+  class: group
+  paths: "deploy.yml on push to main\nonly for coordinator/,\nfrontend/ or panel/" {class: check}
+  ci: "job ci (calls ci.yml)\nlint, tests, console build,\ncontainer smoke" {class: process}
+  enabled: "vars.DEPLOY_ENABLED == 'true'?\nunset today: both deploy\njobs are skipped" {class: check}
+  deploy_app: "deploy-coordinator\nbuild console, route tests,\ngcloud run deploy --source,\nsmoke test" {class: process}
+  deploy_panel: "deploy-panel\npanel tests,\ngcloud storage cp" {class: process}
+  checks_only: "ci.yml (pull requests, other pushes)\ndiagrams.yml (docs/diagrams/)\nanalytics.yml (analytics/)\nno deploy job" {class: check}
+}
+
+wif: "Workload Identity Federation\nOIDC token for this repo only,\nimpersonates palpilot-deployer" {class: process}
+build: "Cloud Build\ncoordinator/Dockerfile" {class: process}
+ar: "Artifact Registry\ncloud-run-source-deploy" {class: store}
+run: "Cloud Run palpilot-coordinator\nnew revision, no downtime" {class: serving}
+panel_bkt: "GCS panel bucket\npanel.py, index.html,\nidle_watchdog.py" {class: store}
+vm_agent: "VM agent\nfetched on the next boot\nor by self-update" {class: process}
+
+owner: "Owner" {class: actor}
+tf: "terraform apply, by hand\nmaintenance window: a startup.sh\nedit recreates the VM" {class: process}
+infra: "VM, disks, IP, firewall,\nbuckets, IAM, Cloud Run shape\n(Terraform ignores the image)" {class: process}
+
+src_app -> gha.paths
+src_panel -> gha.paths
+gha.paths -> gha.ci
+gha.ci -> gha.enabled: passes
+gha.enabled -> gha.deploy_app
+gha.enabled -> gha.deploy_panel
+gha.deploy_app -> wif {class: meta}
+gha.deploy_panel -> wif {class: meta}
+gha.deploy_app -> build: source
+build -> ar: image
+ar -> run
+gha.deploy_panel -> panel_bkt
+panel_bkt -> vm_agent
+
+src_docs -> gha.checks_only
+
+owner -> tf
+src_infra -> tf
+tf -> infra
+
+legend: Legend {
+  class: legend
+  grid-columns: 3
+  source: repository files {class: [source; legend-item]}
+  process: job or service {class: [process; legend-item]}
+  check: gate or check {class: [check; legend-item]}
+  store: stored artifact {class: [store; legend-store]}
+  serving: serving {class: [serving; legend-item]}
+  edges: "solid arrow: code or data\ndashed: credentials" {shape: text; style.font-size: 13}
+}

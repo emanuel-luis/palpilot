@@ -1,0 +1,82 @@
+# The system in context: players, admins, Discord, GitHub Actions and the GCP resources they reach.
+# Grounded in main.tf, coordinator.tf, variables.tf, startup.sh, panel/idle_watchdog.py,
+# coordinator/main.py and .github/workflows/deploy.yml. Every box without a vendor name is a GCP
+# resource in one project. The deploy path in detail (WIF, Artifact Registry) is deployment.d2.
+...@_style
+
+title: "Architecture: an on-demand Palworld server on GCP" {
+  shape: text
+  near: top-center
+  style: {font-size: 24; bold: true}
+}
+
+direction: down
+
+players: Players {class: actor; label.near: outside-top-center}
+admins: "Admins (browser)" {class: actor; label.near: outside-top-center}
+discord: "Discord\nslash commands" {class: external}
+gha: "GitHub Actions\nkeyless via WIF, paused\nwhile DEPLOY_ENABLED is unset" {class: external}
+
+run: "Cloud Run palpilot-coordinator\nconsole, API, Discord bot,\nscales to zero (a gen2 function\nwith the same code is kept\nas a transitional shim)" {class: serving}
+compute: "Compute Engine API\nget, start, stop,\nserial output (custom\nrole, this VM only)" {class: process}
+panel_bkt: "GCS bucket\n<project>-palworld-panel\nagent code, users,\nroles, watchdog config" {class: store}
+secrets: "Secret Manager\n(opt-in): two\npasswords, the\ninternal token" {class: store}
+ip: "Static IP palworld-ip\n(external)" {class: process}
+fw_udp: "firewall\npalworld-udp-8211\nUDP 8211 from\n0.0.0.0/0" {class: check}
+fw_panel: "firewall\npalworld-panel-8080\nTCP 8080, 0.0.0.0/0\nby default. RISK:\nplain HTTP to the agent\n(docs/SECURITY.md)" {class: check}
+
+vm: "palworld-tf-vm" {
+  class: group
+  boot: "startup.sh, every boot of the\ne2-standard-4 VM: agent code,\nsecrets, systemd units, game-sync" {class: process}
+  agent: "palworld-panel (agent)\nFastAPI :8080: saves, mods,\nsettings, backups, metrics" {class: process}
+  watchdog: "palworld-watchdog\npolls the player count, asks\nthe coordinator to stop the VM" {class: process}
+  game: "palworld.service\ngame on UDP 8211\nREST API 127.0.0.1:8212" {class: process}
+  cron: "backup cron, every 6 h\ntarball of Pal/Saved" {class: process}
+  disk: "data disk palworld-data\nworlds, mods, slot configs,\nhistory.jsonl" {class: store}
+}
+
+backup_bkt: "GCS <project>-palworld-backups\nversioned, deleted at 30 days:\ntarballs, slots/,\nstats/history.jsonl" {class: store}
+steam: "Steam\ngame builds" {class: external}
+
+players -> discord: "/palworld start"
+players -> ip: "UDP 8211"
+admins -> run: HTTPS
+discord -> run
+gha -> run: deploy
+gha -> panel_bkt
+
+run -> compute
+run -> panel_bkt
+run -> ip: "signed proxy"
+ip -> fw_udp
+ip -> fw_panel
+fw_udp -> vm.game
+fw_panel -> vm.agent
+compute -> vm.boot: "powers the VM\non and off" {class: meta}
+panel_bkt -> vm.boot
+secrets -> vm.boot {class: meta}
+
+vm.boot -> vm.agent {class: meta}
+vm.boot -> vm.watchdog {class: meta}
+vm.boot -> vm.game {class: meta}
+vm.boot -> vm.cron {class: meta}
+vm.agent -> vm.game
+vm.watchdog -> vm.game
+vm.watchdog -> run: "POST /api/vm/stop"
+vm.agent -> vm.disk
+vm.game -> vm.disk
+vm.agent -> backup_bkt
+vm.cron -> backup_bkt
+vm.agent -> steam
+
+legend: Legend {
+  class: legend
+  grid-columns: 4
+  actor: person {class: [actor; legend-actor]}
+  external: external system {class: [external; legend-item]}
+  serving: serving {class: [serving; legend-item]}
+  process: service or API {class: [process; legend-item]}
+  store: stored data {class: [store; legend-store]}
+  check: firewall rule {class: [check; legend-item]}
+  edges: "solid arrow: data or a call\ndashed: control, config,\nmetadata" {shape: text; style.font-size: 13}
+}
