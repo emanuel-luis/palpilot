@@ -1,0 +1,51 @@
+name: diagrams
+
+# D2 sources in docs/diagrams/ rendered to the committed SVGs (make diagrams-check). This is a
+# private repo that pays for Actions minutes, so the check runs only when a diagram, the Makefile
+# (which holds the D2 pin) or this workflow changes. main has no required status checks, so a
+# path filter cannot leave a pull request waiting for a check that never reports.
+# None of these paths is a deploy path: deploy.yml only fires for coordinator/, frontend/, panel/.
+
+on:
+  pull_request:
+    paths:
+      - "docs/diagrams/**"
+      - "Makefile"
+      - ".gitattributes"
+      - ".github/workflows/diagrams.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/diagrams/**"
+      - "Makefile"
+      - ".gitattributes"
+      - ".github/workflows/diagrams.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagrams-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagrams:
+    name: diagrams (D2 render check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The pinned D2 release, checked against its sha256 in the Makefile.
+      - run: make d2-install
+      - run: make diagrams-check
+      - name: Upload the rendered SVGs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: diagrams
+          path: docs/diagrams/*.svg
+          if-no-files-found: warn
+          retention-days: 7
