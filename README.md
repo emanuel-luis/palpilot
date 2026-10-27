@@ -17,6 +17,22 @@ mods, backups & restore**, and **users, roles, and per-feature permissions**.
 
 ---
 
+## What this demonstrates
+
+- **Cost-aware infrastructure as code:** Terraform for a GCE VM that powers itself off when empty, a
+  serverless control plane on Cloud Run, and a persistent data disk that survives VM recreates.
+- **Safe delivery:** pull-request CI over Terraform (fmt, validate, tflint, checkov with a baseline),
+  Python (ruff, pytest), the React console (ESLint, typecheck, Vitest, build) and the coordinator image
+  (hashed lock, non-root, smoke test). Deploys wait for CI and for an opt-in repository variable.
+- **A data pipeline on the product's own telemetry:** the VM agent's metrics JSONL goes through a
+  contract-checked ingest into Parquet and dbt-duckdb marts that answer "what does a play-hour cost?"
+  and "what does the idle shutdown save?", idempotent and runnable with one command
+  ([`analytics/`](analytics/README.md)).
+- **Operations on paper:** a revival runbook with the remote-state migration, and security notes with
+  the known risks and their fixes ([`docs/`](docs/)).
+
+---
+
 ## Why
 
 A Palworld dedicated server on an always-on 4-vCPU VM burns money while nobody is online. PalPilot keeps the
@@ -105,23 +121,40 @@ Full diagrams and data model: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**
 
 ```bash
 make install   # uv sync + npm ci
-make lint      # ruff, terraform fmt; tflint and checkov when installed
+make lint      # ruff, terraform fmt, frontend lint + typecheck; tflint and checkov when installed
 make tf-check  # terraform init (no backend) + validate
-make test      # pytest (coordinator + agent); the route tests need the built console
+make test      # pytest + Vitest; builds the console first when it is missing
+make demo      # usage/cost analytics end to end on synthetic data (Linux or WSL)
 ```
 
 Pull requests run the same checks in GitHub Actions; see [`docs/CICD.md`](docs/CICD.md).
 
 ---
 
+## Usage and cost analytics
+
+[`analytics/`](analytics/README.md) turns the agent's `stats/history.jsonl` into answers: landing JSONL
+→ contract-checked raw Parquet (with rejects and run metadata) → dbt-duckdb staging, sessions and
+marts → report. The project is offline, so the input is synthetic data in the agent's exact format.
+With the default demo (30 days, seed 42) and the cost estimates below:
+
+| Metric | Value |
+|---|---|
+| VM hours / play hours | 62.3 / 48.6 |
+| Total cost (VM + fixed floor) | US$25.21 |
+| Cost per play-hour | US$0.52 |
+| Savings from the idle shutdown vs. always on | US$118.39 of US$129.60 |
+
+---
+
 ## Cost
 
-Because the server is off by default, cost is a small fixed floor plus a per-play-hour rate (São Paulo, approx):
+Because the server is off by default, cost is a small fixed floor plus a rate per hour the VM runs (São Paulo, approx):
 
 | | Estimate |
 |---|---|
 | Fixed floor (VM off): static IP + disks | **~$14/month** |
-| Per play-hour: compute + egress | **~$0.18/hour** |
+| Per running hour (VM on): compute + egress | **~$0.18/hour** |
 | Example — 2 h/day · 4 h/day · 8 h/day | **~$27 · ~$40 · ~$65 / month** |
 
 The console, backups, roles, per-save settings, mods, watchdog, and monitoring cost effectively nothing —
