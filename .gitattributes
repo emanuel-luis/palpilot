@@ -2,3 +2,12 @@
 *.sh   text eol=lf
 *.py   text eol=lf
 startup.sh text eol=lf
+
+# Diagram sources and the Makefile stay LF everywhere, so a render on Windows (or make under WSL
+# from a Windows checkout) reads the same bytes as CI.
+*.d2 text eol=lf
+Makefile text eol=lf
+# Rendered diagrams: keep the bytes D2 writes (no EOL conversion, so make diagrams-check compares
+# exactly what CI renders) and collapse them in PR diffs; review the .d2 source instead.
+*.svg -text
+docs/diagrams/*.svg linguist-generated=true
