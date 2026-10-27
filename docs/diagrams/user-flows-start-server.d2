@@ -1,0 +1,40 @@
+# A player powers the server on from Discord (or the console) and the VM boots.
+# Grounded in coordinator/discord_bot.py (handle, _caller, _cmd_start), coordinator/main.py
+# (_vm_start, _h_vm_start, _h_vm_serial, _DiscordOps), frontend/src/hooks/queries.ts (useOverview,
+# usePower) and startup.sh.
+...@_style
+
+start: "Start the server from Discord, then the VM boots" {
+  shape: sequence_diagram
+  style: {font-size: 24; bold: true}
+
+  player: "Player" {class: actor}
+  discord: "Discord" {class: external}
+  run: "Coordinator\n(Cloud Run)" {class: serving}
+  compute: "Compute\nEngine API" {class: process}
+  vm: "VM\npalworld-tf-vm" {class: process}
+  bucket: "Panel bucket" {class: store}
+
+  player -> discord: "/palworld start"
+  discord -> run: "POST /api/discord/\ninteractions"
+  run -> run: "check Ed25519\nsignature, guild;\nroles: view, power"
+  run -> compute: "instances.get"
+  compute -> run: "TERMINATED" {class: meta}
+  run -> compute: "instances.start"
+  run -> discord: "reply within 3 s:\nready in 2-3 min, IP:8211" {class: meta}
+  discord -> player: "message in the channel" {class: meta}
+
+  console: "Or from the console (power permission)" {
+    player -> run: "POST /api/vm/start\n(Bearer session token)"
+    run -> compute: "instances.start"
+    player -> run: "GET /api/overview every 3 s\nwhile STAGING; /api/vm/serial"
+    run -> compute: "status, serial port\noutput (boot log)" {class: meta}
+  }
+
+  compute -> vm: "boot: startup.sh"
+  vm -> vm: "mount the data disk;\nsecrets: metadata or\nSecret Manager (opt-in)"
+  vm -> bucket: "copy panel.py, index.html,\nidle_watchdog.py"
+  vm -> vm: "write systemd units;\npanel.py game-sync installs\nthe build the active save wants"
+  vm -> vm: "restart palworld,\npalworld-panel,\npalworld-watchdog"
+  player -> vm: "join on the static IP,\nUDP 8211"
+}

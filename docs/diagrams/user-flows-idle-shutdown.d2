@@ -1,0 +1,43 @@
+# The idle watchdog powers the VM off once nobody has played for the grace period.
+# Grounded in panel/idle_watchdog.py (main, fetch_config, player_count, request_shutdown),
+# coordinator/main.py (the X-Internal-Token branch of coordinator(), _load_wd, _vm_stop, _audit)
+# and startup.sh (palworld-watchdog.service environment).
+...@_style
+
+idle: "Idle shutdown: the watchdog stops an empty server" {
+  shape: sequence_diagram
+  style: {font-size: 24; bold: true}
+
+  watchdog: "palworld-watchdog\n(on the VM)" {class: process}
+  game: "Game REST API\n127.0.0.1:8212" {class: process}
+  run: "Coordinator\n(Cloud Run)" {class: serving}
+  bucket: "Panel bucket\nwatchdog.json" {class: store}
+  compute: "Compute\nEngine API" {class: process}
+
+  watchdog -> watchdog: "start at boot; the empty\ntimer starts now, so a VM\nnobody joins stops too"
+
+  poll: "Every poll (default 60 s)" {
+    watchdog -> run: "GET /api/watchdog-config\nX-Internal-Token"
+    run -> bucket: "read (10 s cache)"
+    run -> watchdog: "poll and grace seconds\n(on failure the watchdog\nuses its env defaults)" {class: meta}
+    watchdog -> game: "GET /v1/api/metrics\n(Basic, admin)"
+    game -> watchdog: "currentplayernum" {class: meta}
+    online: "Players online" {
+      watchdog -> watchdog: "clear the empty timer"
+    }
+    down: "REST unreachable (booting, restarting)" {
+      watchdog -> watchdog: "timer unchanged"
+    }
+    empty: "No players" {
+      watchdog -> watchdog: "empty for N s of grace"
+    }
+  }
+
+  stop: "Empty for the whole grace (default 1800 s)" {
+    watchdog -> run: "POST /api/vm/stop\nX-Internal-Token"
+    run -> compute: "instances.stop"
+    run -> run: "audit log: change by\nwatchdog, reason idle"
+    run -> watchdog: "200 stopping" {class: meta}
+    watchdog -> watchdog: "exit; the VM powers off,\nthe data disk keeps the world"
+  }
+}
