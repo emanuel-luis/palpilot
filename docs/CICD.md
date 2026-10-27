@@ -47,7 +47,7 @@ DEPLOYER=palpilot-deployer@$PROJECT.iam.gserviceaccount.com
 gcloud iam service-accounts create palpilot-deployer \
   --project="$PROJECT" --display-name="PalPilot CI deployer"
 
-# 2) Roles it needs (gen2 function deploy + bucket push + deploy-as the runtime SA)
+# 2) Roles it needs (Cloud Run source deploy + bucket push + deploy-as the runtime SA)
 for R in roles/run.admin roles/cloudfunctions.developer roles/cloudbuild.builds.editor \
          roles/artifactregistry.writer roles/storage.admin roles/serviceusage.serviceUsageConsumer; do
   gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$DEPLOYER" --role="$R"
@@ -57,7 +57,7 @@ gcloud iam service-accounts add-iam-policy-binding \
   "palworld-coordinator@$PROJECT.iam.gserviceaccount.com" \
   --project="$PROJECT" --member="serviceAccount:$DEPLOYER" --role=roles/iam.serviceAccountUser
 
-# act as the DEFAULT COMPUTE SA too — a gen2 deploy builds via Cloud Build, which
+# act as the DEFAULT COMPUTE SA too — a source deploy builds via Cloud Build, which
 # runs as this account. Without it the deploy dies with
 #   "Caller is missing permission 'iam.serviceaccounts.actAs' on service account
 #    <PNUM>-compute@developer.gserviceaccount.com"
@@ -100,12 +100,12 @@ gh variable set PANEL_BUCKET     --repo emanuel-luis/palpilot --body "<PANEL_BUC
 ---
 
 ## Notes
-- Runtime **env vars/secrets and the runtime service account are preserved** across `gcloud functions deploy`; the
+- Runtime **env vars/secrets and the runtime service account are preserved** across `gcloud run deploy`; the
   workflow re-asserts only the non-secret service config (memory/timeout/instances) so it stays deterministic.
 - **Panel** changes take effect on the **next VM boot**. To apply immediately, start the VM (or use the panel
   self-update) — CI does not restart a live server.
-- `workflow_dispatch` (the "Run workflow" button) forces both jobs regardless of changed paths — handy for a first
-  smoke test after setup.
+- `workflow_dispatch` (the "Run workflow" button) forces both jobs regardless of changed paths, once
+  `DEPLOY_ENABLED` is `true`; handy for a first smoke test after setup.
 - Simpler alternative to WIF: a service-account JSON key in a `GCP_SA_KEY` secret + `credentials_json:` in the auth
   step. Not recommended (long-lived key), but supported by `google-github-actions/auth`.
 
