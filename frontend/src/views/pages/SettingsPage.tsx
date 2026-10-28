@@ -87,7 +87,7 @@ function NumberField({
       }}
       className={cn(
         "num h-9 w-full rounded-md border bg-surface-2 px-3 font-mono text-sm",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         invalid || outOfRange ? "border-danger" : "border-line",
       )}
     />
@@ -117,7 +117,7 @@ function Field({
     <div
       className={cn(
         "rounded-lg border p-4 transition-colors duration-fast",
-        dirty ? "border-signal/50 bg-signal/[0.04]" : "border-line/60 bg-surface",
+        dirty ? "border-signal/50 bg-signal/4" : "border-line/60 bg-surface",
       )}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -153,7 +153,7 @@ function Field({
         ) : kind === "enum" ? (
           <select
             id={id}
-            className="h-9 w-full rounded-md border border-line bg-surface-2 px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 w-full rounded-md border border-line bg-surface-2 px-2 text-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             value={value}
             disabled={!canWrite}
             onChange={(e) => onChange(e.target.value)}
@@ -173,7 +173,7 @@ function Field({
             id={id}
             type={kind === "secret" ? "password" : "text"}
             autoComplete={kind === "secret" ? "new-password" : undefined}
-            className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             value={value}
             disabled={!canWrite}
             onChange={(e) => onChange(e.target.value)}
@@ -200,7 +200,7 @@ function Field({
               className="h-6 px-2 text-2xs"
               onClick={() => onChange(original)}
             >
-              <Undo2 className="!size-3" /> Undo
+              <Undo2 className="size-3!" /> Undo
             </Button>
           ) : null}
           {canWrite ? (
@@ -212,7 +212,7 @@ function Field({
                 disabled={isDefault}
                 onClick={() => onChange(spec!.default!)}
               >
-                <RotateCcw className="!size-3" /> Default
+                <RotateCcw className="size-3!" /> Default
               </Button>
             ) : (
               <Tip label="This build doesn't know this setting's shipped default, so it won't guess one.">
@@ -445,7 +445,7 @@ export function SettingsPage() {
       />
 
       {slotGuid && !editingActive ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-signal/40 bg-signal/[0.06] px-4 py-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-signal/40 bg-signal/6 px-4 py-2.5 text-xs">
           <Badge tone="info">not active</Badge>
           <span className="text-muted">
             {loaded && (loaded as any).stored === false
@@ -466,7 +466,7 @@ export function SettingsPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search all settings"
             aria-label="Search all settings"
-            className="h-9 w-64 rounded-md border border-line bg-surface-2 pl-8 pr-3 text-sm placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-9 w-64 rounded-md border border-line bg-surface-2 pl-8 pr-3 text-sm placeholder:text-faint focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
         {changedKeys.length ? (

@@ -79,7 +79,7 @@ export function ConsoleView() {
             key={s.route}
             type="button"
             onClick={() => navigate(s.route)}
-            className="group rounded-xl border border-line/60 bg-surface p-4 text-left shadow-soft transition-all duration-fast hover:border-signal/50 hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="group rounded-xl border border-line/60 bg-surface p-4 text-left shadow-soft transition-all duration-fast hover:border-signal/50 hover:shadow-lift focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">{s.label}</span>
