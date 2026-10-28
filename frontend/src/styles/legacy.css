@@ -1,3 +1,10 @@
+/* Tailwind 4 emits native cascade layers, and unlayered CSS beats every layer. This sheet
+   loads first (main.tsx), so the statement below fixes the layer order for the whole bundle,
+   and the block puts these rules in the base layer ahead of preflight and the token rules
+   in styles.css: they compete by specificity and then order, as they did under Tailwind 3,
+   and every utility still wins. Content is not re-indented on purpose. */
+@layer properties, theme, base, components, utilities;
+@layer base {
 /* PalPilot — instrument-panel design system.
  *
  * Two registers held in tension: industrial (mono readouts, tabular figures,
@@ -857,3 +864,4 @@ pre {
     border-color: var(--brass);
   }
 }
+} /* @layer base */

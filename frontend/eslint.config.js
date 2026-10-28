@@ -20,6 +20,4 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
-  // tailwind.config.ts require()s its plugins.
-  { files: ["tailwind.config.ts"], rules: { "@typescript-eslint/no-require-imports": "off" } },
 );

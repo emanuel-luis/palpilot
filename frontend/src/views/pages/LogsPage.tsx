@@ -80,7 +80,7 @@ function SourceTabs({ source, onChange }: { source: Source; onChange: (s: Source
             onClick={() => onChange(t.id)}
             className={cn(
               "rounded-md px-3 py-1.5 text-xs transition-colors duration-fast",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
               source === t.id
                 ? "bg-signal/12 font-medium text-fg"
                 : "text-muted hover:bg-surface-2 hover:text-fg",
@@ -253,7 +253,7 @@ export function LogsPage() {
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Filter lines"
               aria-label="Filter log lines"
-              className="h-8 w-44 rounded-md border border-line bg-surface-2 pl-7 pr-2 text-xs placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-8 w-44 rounded-md border border-line bg-surface-2 pl-7 pr-2 text-xs placeholder:text-faint focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
 
@@ -265,7 +265,7 @@ export function LogsPage() {
               aria-pressed={hideNoise}
               className={cn(
                 "rounded-md px-2 py-1 text-2xs transition-colors duration-fast",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                 hideNoise ? "bg-surface-2 text-muted" : "text-faint hover:text-fg",
               )}
             >

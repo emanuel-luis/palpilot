@@ -52,7 +52,7 @@ export function Toaster() {
   useEffect(() => { listeners.add(set); return () => { listeners.delete(set); }; }, []);
 
   return (
-    <div className="pointer-events-none fixed inset-x-4 bottom-4 z-[100] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-5 sm:max-w-sm">
+    <div className="pointer-events-none fixed inset-x-4 bottom-4 z-100 flex flex-col items-end gap-2 sm:inset-x-auto sm:right-5 sm:max-w-sm">
       {list.map((x) => {
         const tone = TONE[x.kind];
         const Icon = tone.icon;
@@ -73,7 +73,7 @@ export function Toaster() {
               type="button"
               onClick={() => dismiss(x.id)}
               aria-label="Dismiss"
-              className="rounded p-0.5 text-faint transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-sm p-0.5 text-faint transition-colors hover:text-fg focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>

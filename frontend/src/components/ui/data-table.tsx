@@ -103,8 +103,11 @@ export function DataTable<Row>({
 
   const showToolbar = searchable || toolbar;
 
+  // Tailwind 3's space-y-3 selector, spelled out: Tailwind 4's space-y margins every child
+  // but the last, so the md:hidden list after the desktop table would add 12px below it,
+  // and gap would drop the 12px above the mobile list when there is no toolbar.
   return (
-    <div className="space-y-3">
+    <div className="[&>:not([hidden])~:not([hidden])]:mt-3">
       {showToolbar ? (
         <div className="flex flex-wrap items-center gap-3">
           {searchable ? (
@@ -115,7 +118,7 @@ export function DataTable<Row>({
                 onChange={(e) => { setQuery(e.target.value); setPage(0); }}
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
-                className="h-9 w-56 rounded-md border border-line bg-surface-2 pl-8 pr-3 text-sm placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-9 w-56 rounded-md border border-line bg-surface-2 pl-8 pr-3 text-sm placeholder:text-faint focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           ) : null}
@@ -151,8 +154,8 @@ export function DataTable<Row>({
                         type="button"
                         onClick={() => toggleSort(c.key)}
                         className={cn(
-                          "inline-flex items-center gap-1 rounded transition-colors hover:text-fg",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "inline-flex items-center gap-1 rounded-sm transition-colors hover:text-fg",
+                          "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                           active && "text-fg",
                         )}
                       >
