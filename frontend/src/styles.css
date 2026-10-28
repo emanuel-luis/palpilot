@@ -1,4 +1,10 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+
+/* The class scan of Tailwind 3: the app shell and src/, never the tests, so a word in a
+   test cannot change the shipped CSS (docs/DECISIONS.md rows 21 and 43). */
+@source "../index.html";
+@source "./**/*.{ts,tsx}";
+@source not "./__tests__";
 
 @plugin "tailwindcss-animate";
 
