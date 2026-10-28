@@ -1,17 +1,195 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+@theme {
+  --color-bg: hsl(var(--bg));
+  --color-surface: hsl(var(--surface));
+  --color-surface-2: hsl(var(--surface-2));
+  --color-line: hsl(var(--line));
+  --color-fg: hsl(var(--fg));
+  --color-muted: hsl(var(--fg-muted));
+  --color-faint: hsl(var(--faint));
+  --color-signal: hsl(var(--signal));
+  --color-signal-fg: hsl(var(--signal-fg));
+  --color-ion: hsl(var(--ion));
+  --color-ok: hsl(var(--ok));
+  --color-warn: hsl(var(--warn));
+  --color-danger: hsl(var(--danger));
+  --color-ring: hsl(var(--ring));
+
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-5: 24px;
+  --spacing-6: 32px;
+  --spacing-7: 40px;
+  --spacing-8: 48px;
+  --spacing-9: 64px;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-2xs--letter-spacing: 0.08em;
+  --text-xs: 12px;
+  --text-xs--line-height: 18px;
+  --text-sm: 13px;
+  --text-sm--line-height: 20px;
+  --text-base: 14px;
+  --text-base--line-height: 22px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-xl--letter-spacing: -0.01em;
+  --text-2xl: 26px;
+  --text-2xl--line-height: 32px;
+  --text-2xl--letter-spacing: -0.02em;
+  --text-3xl: 34px;
+  --text-3xl--line-height: 40px;
+  --text-3xl--letter-spacing: -0.02em;
+
+  /* Tailwind 3 kept numeric line heights on their own rem scale; Tailwind 4 derives
+     them from --spacing-*, which this theme overrides (leading-5 would become 24px). */
+  --leading-3: 0.75rem;
+  --leading-4: 1rem;
+  --leading-5: 1.25rem;
+  --leading-6: 1.5rem;
+  --leading-7: 1.75rem;
+  --leading-8: 2rem;
+  --leading-9: 2.25rem;
+  --leading-10: 2.5rem;
+
+  --shadow-soft:
+    0 1px 2px hsl(var(--shadow) / 0.28), 0 2px 8px hsl(var(--shadow) / 0.22);
+  --shadow-lift: 0 8px 24px hsl(var(--shadow) / 0.34);
+  --shadow-pop: 0 16px 48px hsl(var(--shadow) / 0.46);
+  --shadow-glow-ok:
+    0 0 0 1px hsl(var(--ok) / 0.4), 0 0 24px hsl(var(--ok) / 0.28);
+  --shadow-glow-warn:
+    0 0 0 1px hsl(var(--warn) / 0.4), 0 0 24px hsl(var(--warn) / 0.3);
+
+  --transition-duration-fast: 150ms;
+  --default-transition-duration: 180ms;
+  --transition-duration-slow: 250ms;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-up: fade-up 250ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-ring-spin: ring-spin 2.4s linear infinite;
+  --animate-breathe: breathe 2.4s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.6s infinite;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes ring-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+
+  /* Tailwind 4's preflight dropped the pointer cursor on buttons; keep the
+     Tailwind 3 behavior (upgrade guide compatibility rule). */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Tailwind 4's preflight makes placeholders 50% of the text color; Tailwind 3
+     used gray-400. Inputs that set placeholder:text-faint are unaffected. */
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+}
+
+@utility eyebrow {
+  /* Wide-tracked uppercase micro-label — the structural device throughout.
+     It marks a data field, so it is never used for prose. */
+  @apply text-2xs font-semibold uppercase text-faint;
+}
+
+@utility glass {
+  /* Restrained glass: only on the two surfaces where it earns hierarchy
+     (the ignition module and dialogs), never on ordinary cards. */
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--surface) / 0.92),
+    hsl(var(--surface) / 0.78)
+  );
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+}
+
+@utility scroll-y {
+  /* Long output (log terminal) must scroll inside itself, never the page. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 
 /* The previous "Field Ops" stylesheet still loads, imported from main.tsx ahead
-   of this file, so screens not yet migrated keep rendering. Drop that import and
-   styles/legacy.css once every view uses the token system below. */
+   of this file, so screens not yet migrated keep rendering. It wraps itself in
+   the base layer (see its header). Drop that import and styles/legacy.css once
+   every view uses the token system below. */
 
 /* ---------------------------------------------------------------------------
    Theme tokens. Dark navy is the designed experience; the light variant is the
    same token system inverted, so the existing theme toggle keeps working rather
    than being dropped. `data-theme` on <html> wins over the media query in both
    directions (lib/theme.ts stamps it).
-   Values are bare HSL triples so Tailwind's `<alpha-value>` works.
+   Values are bare HSL triples; the @theme colors above wrap them in hsl(), and
+   opacity modifiers (bg-line/60) mix them with transparent.
 --------------------------------------------------------------------------- */
 
 @layer base {
@@ -125,7 +303,7 @@
   }
 
   :focus-visible {
-    @apply outline-none ring-2 ring-ring ring-offset-2;
+    @apply outline-hidden ring-2 ring-ring ring-offset-2;
     --tw-ring-offset-color: hsl(var(--bg));
   }
 
@@ -136,34 +314,6 @@
   textarea {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--line)) transparent;
-  }
-}
-
-@layer components {
-  /* Wide-tracked uppercase micro-label — the structural device throughout.
-     It marks a data field, so it is never used for prose. */
-  .eyebrow {
-    @apply text-2xs font-semibold uppercase text-faint;
-  }
-
-  /* Restrained glass: only on the two surfaces where it earns hierarchy
-     (the ignition module and dialogs), never on ordinary cards. */
-  .glass {
-    background: linear-gradient(
-      to bottom,
-      hsl(var(--surface) / 0.92),
-      hsl(var(--surface) / 0.78)
-    );
-    backdrop-filter: blur(14px) saturate(1.15);
-    -webkit-backdrop-filter: blur(14px) saturate(1.15);
-  }
-}
-
-@layer utilities {
-  /* Long output (log terminal) must scroll inside itself, never the page. */
-  .scroll-y {
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 }
 

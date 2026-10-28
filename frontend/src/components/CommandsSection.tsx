@@ -15,7 +15,7 @@ import { cn } from "@/lib/cn";
 
 const inputCls =
   "h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm placeholder:text-faint " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring";
 
 function Labelled({
   label, hint, children, className,

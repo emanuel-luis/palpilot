@@ -112,7 +112,7 @@ export function ConfirmHost() {
 
   return (
     <div
-      className="fixed inset-0 z-[200] grid place-items-center bg-black/55 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-200 grid place-items-center bg-black/55 p-4 backdrop-blur-xs"
       onMouseDown={(e) => { if (e.target === e.currentTarget) settle("cancel", ""); }}
     >
       <div
@@ -147,7 +147,7 @@ export function ConfirmHost() {
             <input
               id="dialog-input"
               ref={inputRef}
-              className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm placeholder:text-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-sm placeholder:text-faint focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               value={value}
               placeholder={p.input.placeholder}
               onChange={(e) => setValue(e.target.value)}

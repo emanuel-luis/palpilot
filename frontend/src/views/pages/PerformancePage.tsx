@@ -212,7 +212,7 @@ export function PerformancePage() {
                 aria-pressed={range === r.id}
                 className={cn(
                   "rounded-md px-2.5 py-1.5 text-xs transition-colors duration-fast",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                   range === r.id
                     ? "bg-signal/12 font-medium text-fg"
                     : "text-muted hover:bg-surface-2 hover:text-fg",

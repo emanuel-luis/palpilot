@@ -84,7 +84,7 @@ function NavLink({ item, active, onNavigate }: { item: NavItem; active: boolean;
       }}
       className={cn(
         "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors duration-fast",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         active
           ? "bg-signal/12 font-medium text-fg shadow-[inset_2px_0_0_0_hsl(var(--signal))]"
           : "text-muted hover:bg-surface-2 hover:text-fg",
@@ -145,7 +145,7 @@ export function AppShell({
         {/* ---------------------------------------------------------- sidebar */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-line/60 bg-surface/80 backdrop-blur",
+            "fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-line/60 bg-surface/80 backdrop-blur-sm",
             "transition-transform duration-slow ease-out lg:static lg:translate-x-0",
             drawer ? "translate-x-0" : "-translate-x-full",
           )}
@@ -200,7 +200,7 @@ export function AppShell({
 
         {/* ------------------------------------------------------------ main */}
         <div className="flex min-w-0 flex-col">
-          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line/60 bg-bg/85 px-4 backdrop-blur">
+          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-line/60 bg-bg/85 px-4 backdrop-blur-sm">
             <Button
               size="icon"
               variant="ghost"

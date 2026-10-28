@@ -258,7 +258,7 @@ export function IgnitionModule({
               aria-label={online ? "Stop server" : "Start server"}
               className={cn(
                 "relative grid size-28 place-items-center rounded-full transition-all duration-slow ease-out",
-                "bg-surface-2 shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4",
+                "bg-surface-2 shadow-lift focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4",
                 "disabled:cursor-not-allowed disabled:opacity-70",
                 !busy && "hover:brightness-110 active:translate-y-px",
                 online && "shadow-glow-ok",
@@ -310,7 +310,7 @@ export function IgnitionModule({
             className={cn(
               "group flex w-full items-center gap-3 rounded-md border border-dashed border-line px-3 py-2 text-left",
               "transition-colors duration-fast hover:border-signal disabled:cursor-not-allowed disabled:opacity-60",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             )}
             aria-label={address ? `Copy server address ${address}` : "Server address unavailable"}
           >
