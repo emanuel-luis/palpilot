@@ -2,7 +2,7 @@
   "name": "palpilot-frontend",
   "version": "3.0.0",
   "private": true,
-  "description": "PalPilot console — React 18 + TS + Vite, multi-file build served by the coordinator (Cloud Run).",
+  "description": "PalPilot console — React 19 + TS + Vite, multi-file build served by the coordinator (Cloud Run).",
   "type": "module",
   "scripts": {
     "dev": "vite",

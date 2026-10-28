@@ -28,7 +28,7 @@ Keyless auth via **Workload Identity Federation** (no service-account JSON keys 
 | `lint-python` | `ruff check` and `ruff format --check` (format skips `coordinator/` and `panel/`) |
 | `terraform` | `fmt -check`, `init -backend=false` with the lock file read-only, `validate`, tflint, checkov against `.checkov.baseline` (only new findings fail) |
 | `actionlint` | workflow syntax |
-| `frontend` | `npm ci`, then `npm run lint` (ESLint 9), `npm run typecheck`, `npm test` (Vitest) and `npm run build` (includes `tsc -b`); uploads the build for the test job |
+| `frontend` | `npm ci`, then `npm run lint` (ESLint 10, on Node 24), `npm run typecheck`, `npm test` (Vitest) and `npm run build` (includes `tsc -b`); uploads the build for the test job |
 | `test-python` | `uv run pytest` over `coordinator/tests` and `panel/tests`, using that build |
 
 `security.yml` runs weekly and on changes to the dependency files. `pip-audit` checks `coordinator/requirements.txt`; `npm-audit` runs `npm audit --omit=dev --audit-level=high` in `frontend/` (production dependencies only, so dev-tool advisories do not block). Run the same checks locally with `make lint`, `make test` and `make tf-check`; `make lint` and `make test` include the frontend lint, typecheck and tests.
