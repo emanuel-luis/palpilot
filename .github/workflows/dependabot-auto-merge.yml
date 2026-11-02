@@ -1,0 +1,122 @@
+# Merges Dependabot minor and patch updates, and same-tag Docker digest refreshes, without a
+# human, and never before CI is green. Pre-releases always wait for a human. Majors are ignored in .github/dependabot.yml; any other
+# Dependabot PR (a major security fix, a manual edit) is left for a human.
+#
+# Merge mode: WAIT-THEN-MERGE. This private repo has no branch protection on this plan, so
+# `gh pr merge --auto` would merge at once without waiting for CI. Instead this job polls the
+# PR's checks (all of them except its own), merges only after two polls in a row find every
+# check finished and green, stops without merging when any check fails, and gives up after
+# 45 minutes.
+#
+# A merge made with the GITHUB_TOKEN does not start push workflows, so main's CI runs again on
+# the next human push, its schedule or a manual dispatch, not right after this merge.
+#
+# Security updates: alert lookup in fetch-metadata needs a PAT or an app token, so this job does
+# not tell security updates apart; a security fix merges here when it is a minor or patch bump.
+name: dependabot-auto-merge
+
+on: pull_request
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: dependabot-auto-merge
+    # Only PRs that Dependabot opened. The PR author is checked rather than github.actor, which
+    # is only the last actor and can be spoofed (zizmor bot-conditions). fetch-metadata also
+    # refuses a PR that holds any commit not made by Dependabot, so a human push never merges.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: write # merge the PR into main
+      pull-requests: write # enable auto-merge or merge the PR
+      checks: read # read the PR's check runs while waiting for them
+      statuses: read # read the PR's commit statuses while waiting for them
+      actions: read # gh pr checks reads the workflow name of each check run
+    steps:
+      - name: Read the Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Decide whether this update may merge on its own
+        id: policy
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          UPDATED_JSON: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          # A digest refresh keeps the image tag and only swaps the rebuilt image, so it has no
+          # semver update type; Dependabot titles it "bump <image> from `<digest>` to `<digest>`".
+          # shellcheck disable=SC2016  # the backticks are literal characters of the title
+          digest_re='from `[0-9a-f]{7,}` to `[0-9a-f]{7,}`'
+          eligible=false
+          case "$UPDATE_TYPE" in
+            version-update:semver-minor | version-update:semver-patch)
+              eligible=true ;;
+            "")
+              if [[ "$ECOSYSTEM" =~ ^docker(_compose)?$ && "$PR_TITLE" =~ $digest_re ]]; then
+                eligible=true
+              fi ;;
+          esac
+          # A security update takes the first fixed version, which can be a pre-release (Twisted
+          # 26.10.0rc1 in ecommerce-scraping); a pre-release always waits for a human.
+          prerelease=$(jq '[.[].newVersion // "" | select(test("^v?[0-9][0-9.]*(a|b|rc|[.]?dev|[.]?pre)[0-9]*$|^v?[0-9]+[.][0-9]+[.][0-9]+-(alpha|beta|rc|pre|next|canary|dev)"; "i"))] | length > 0' <<<"$UPDATED_JSON" 2>/dev/null || echo unknown)
+          if [[ "$prerelease" != "false" ]]; then
+            eligible=false
+          fi
+          echo "update-type='$UPDATE_TYPE' ecosystem='$ECOSYSTEM' prerelease=$prerelease eligible=$eligible"
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
+      - name: Merge once every other check on the PR is green
+        if: steps.policy.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELF_WORKFLOW: ${{ github.workflow }}
+          SELF_JOB: dependabot-auto-merge
+        run: |
+          set -uo pipefail
+          deadline=$(( $(date +%s) + 45 * 60 ))
+          streak=0
+          # Give the other workflows of this push time to register their checks.
+          sleep 60
+          while (( $(date +%s) < deadline )); do
+            checks=$(gh pr checks "$PR_URL" --json name,workflow,bucket 2>"$RUNNER_TEMP/gh-checks.err")
+            rc=$?
+            # gh exits 8 while checks are pending and 1 when one failed; anything else is an error.
+            if (( rc != 0 && rc != 1 && rc != 8 )) || [[ -z "$checks" ]]; then
+              echo "::warning::gh pr checks exited $rc: $(head -c 500 "$RUNNER_TEMP/gh-checks.err")"
+              checks='[]'
+            fi
+            counts=$(jq -r --arg wf "$SELF_WORKFLOW" --arg job "$SELF_JOB" '
+              [.[] | select(.workflow != $wf and .name != $job)]
+              | "\(length) \([.[] | select(.bucket == "pending")] | length) \([.[] | select(.bucket == "fail" or .bucket == "cancel")] | length)"
+            ' <<<"${checks:-[]}" 2>/dev/null) || counts="0 0 0"
+            read -r total pending failed <<<"$counts"
+            echo "other checks: total=$total pending=$pending failed=$failed"
+            if (( failed > 0 )); then
+              echo "::notice::A check failed or was cancelled; leaving this PR for a human."
+              exit 0
+            fi
+            if (( total > 0 && pending == 0 )); then
+              streak=$(( streak + 1 ))
+              # Two green polls in a row, so a workflow that registers late is not missed.
+              if (( streak >= 2 )); then
+                gh pr merge --merge --match-head-commit "$HEAD_SHA" "$PR_URL"
+                exit $?
+              fi
+            else
+              streak=0
+            fi
+            sleep 30
+          done
+          echo "::error::The checks were not all green after 45 minutes; not merging."
+          exit 1

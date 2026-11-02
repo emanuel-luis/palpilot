@@ -1,42 +1,77 @@
+# Monthly update PRs, one group per ecosystem for minor and patch. Semver-major version updates
+# are ignored (majors move by hand) and a release waits 7 days before it is proposed. Security
+# updates skip the schedule and the cooldown. Monthly also keeps CI minutes low on this private
+# repo. .github/workflows/dependabot-auto-merge.yml merges these PRs once CI is green.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: uv
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       python-dev:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       # typescript-eslint 8 supports TypeScript up to 6.0 (docs/DECISIONS.md row 41).
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
   - package-ecosystem: terraform
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
     groups:
       terraform:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /coordinator
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
     ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       # The runtime stays on Python 3.12 (refactor baseline); only patch and digest updates of that tag.
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-    schedule:
-      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
