@@ -11,7 +11,7 @@
 # (no ARG) so Dependabot can bump them; keep them identical so the venv's ABI matches.
 
 
-FROM python:3.12-slim@sha256:5b8b1421ccb6a525860a77863c049eab5847076cda34e030c75a80c58faf3f3c AS builder
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 COPY requirements.lock /tmp/requirements.lock
@@ -19,7 +19,7 @@ COPY requirements.lock /tmp/requirements.lock
 # --require-hashes refuses anything unpinned or unhashed.
 RUN /opt/venv/bin/pip install --require-hashes -r /tmp/requirements.lock
 
-FROM python:3.12-slim@sha256:5b8b1421ccb6a525860a77863c049eab5847076cda34e030c75a80c58faf3f3c
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/opt/venv/bin:$PATH
